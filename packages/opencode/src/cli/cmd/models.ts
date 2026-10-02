@@ -30,14 +30,24 @@ export const ModelsCommand = effectCmd({
       UI.println(UI.Style.TEXT_SUCCESS_BOLD + "Models cache refreshed" + UI.Style.TEXT_NORMAL)
     }
 
+    const { Config } = yield* Effect.promise(() => import("@/config/config"))
+    const { ToolSelection } = yield* Effect.promise(() => import("@/tool/selection"))
+    const configured = yield* Config.Service.use((cfg) => cfg.get())
     const provider = yield* Provider.Service
     const providers = yield* provider.list()
 
     const print = (providerID: ProviderV2.ID, verbose?: boolean) => {
       const p = providers[providerID]
+      const configuredModels = configured.provider?.[providerID]?.models
       const sorted = Object.entries(p.models).sort(([a], [b]) => a.localeCompare(b))
       for (const [modelID, model] of sorted) {
-        process.stdout.write(`${providerID}/${modelID}`)
+        const choice =
+          configuredModels?.[modelID]?.tool_choice ??
+          configuredModels?.[model.api.id]?.tool_choice ??
+          Object.values(configuredModels ?? {}).find((item) => item.id === modelID || item.id === model.api.id)
+            ?.tool_choice
+        const decision = ToolSelection.editDecision(model.api.id, choice)
+        process.stdout.write(`${providerID}/${modelID}  ${decision.variant}  ${decision.source}`)
         process.stdout.write(EOL)
         if (verbose) {
           process.stdout.write(JSON.stringify(model, null, 2))
