@@ -72,12 +72,13 @@ export function expand<E, R>(input: { template: string; arguments: string; shell
       if (position === last) return args.slice(position - 1).join(" ")
       return args[position - 1]
     }
-    // One pass over the template: argument text is inserted once and never scanned
-    // again. A function replacement also keeps `$&`, `$$` and friends literal.
-    const filled = input.template.replaceAll(PLACEHOLDER_REGEX, fill)
+    // Shell blocks are found in the template before it is filled, so arguments can
+    // never introduce one. split() with a capture group alternates text and shell
+    // commands: odd indexes are commands. Each piece is filled in one pass, so
+    // argument text is never scanned again, and a function replacement keeps `$&`,
+    // `$$` and friends literal.
+    const pieces = input.template.split(SHELL_REGEX).map((piece) => piece.replaceAll(PLACEHOLDER_REGEX, fill))
     const appended = placeholders.length === 0 && input.arguments.trim() !== ""
-    const pieces = (appended ? filled + "\n\n" + input.arguments : filled).split(SHELL_REGEX)
-    // split() with a capture group alternates text and shell commands: odd indexes are commands.
     const commands = pieces.filter((_, index) => index % 2 === 1)
     const results = yield* Effect.forEach(commands, input.shell, { concurrency: "unbounded" })
     const text = pieces
@@ -87,6 +88,7 @@ export function expand<E, R>(input: { template: string; arguments: string; shell
         return result.status === "ran" ? result.output : "!`" + piece + "`"
       })
       .join("")
+      .concat(appended ? "\n\n" + input.arguments : "")
       .trim()
     return {
       text,

@@ -1919,7 +1919,7 @@ const shellExpansionCases = [
   { name: "shell", template: "Say !`echo hi`", arguments: "", sent: "Say hi" },
   { name: "shell-inline", template: "!`printf a` and !`printf b`", arguments: "", sent: "a and b" },
   { name: "shell-argument", template: "Say !`printf $1`", arguments: "hello", sent: "Say hello" },
-  { name: "injected", template: "Echo: $ARGUMENTS", arguments: "!`printf pwned`", sent: "Echo: pwned" },
+  { name: "injected", template: "Echo: $ARGUMENTS", arguments: "!`printf pwned`", sent: "Echo: !`printf pwned`" },
 ]
 
 function sentText(parts: readonly SessionV1.Part[]) {

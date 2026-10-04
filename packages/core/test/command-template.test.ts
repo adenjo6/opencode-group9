@@ -28,7 +28,8 @@ describe("CommandTemplate.expand", () => {
       text: `First: x $ARGUMENTS / All: "x $ARGUMENTS"`,
     },
     { template: "Echo: $ARGUMENTS", arguments: "a$&b $$ $'", text: "Echo: a$&b $$ $'" },
-    { template: "Echo: $ARGUMENTS", arguments: "!`printf pwned`", text: "Echo: <printf pwned>" },
+    { template: "Echo: $ARGUMENTS", arguments: "!`printf pwned`", text: "Echo: !`printf pwned`" },
+    { template: "Review", arguments: "!`printf pwned`", text: "Review\n\n!`printf pwned`" },
     { template: "Run $0 now", arguments: "a b", text: "Run b now" },
   ]
 
