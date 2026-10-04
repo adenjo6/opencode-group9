@@ -8,7 +8,7 @@ import { Effect, Schema } from "effect"
 // - `` !`command` `` is replaced with the command's output by a ShellStrategy.
 // - A template without placeholders gets the arguments appended after a blank line.
 export const SHELL_REGEX = /!`([^`]+)`/g
-const PLACEHOLDER_REGEX = /\$(\d+)/g
+const PLACEHOLDER_REGEX = /\$(?:ARGUMENTS|\d+)/g
 // `[Image N]` stays one token, quotes group words, anything else splits on whitespace.
 const ARGUMENT_REGEX = /(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi
 const QUOTE_REGEX = /^["']|["']$/g
@@ -60,19 +60,22 @@ export function hints(template: string) {
 export function expand<E, R>(input: { template: string; arguments: string; shell: ShellStrategy<E, R> }) {
   return Effect.gen(function* () {
     const args = parseArguments(input.arguments)
-    const positions = Array.from(input.template.matchAll(PLACEHOLDER_REGEX), (match) => Number(match[1]))
-    const last = Math.max(0, ...positions)
-    const fill = (position: number) => {
+    const placeholders = hints(input.template)
+    const last = Math.max(
+      0,
+      ...placeholders.filter((item) => item !== "$ARGUMENTS").map((item) => Number(item.slice(1))),
+    )
+    const fill = (placeholder: string) => {
+      if (placeholder === "$ARGUMENTS") return input.arguments
+      const position = Number(placeholder.slice(1))
       if (position - 1 >= args.length) return ""
       if (position === last) return args.slice(position - 1).join(" ")
       return args[position - 1]
     }
-    const usesArguments = input.template.includes("$ARGUMENTS")
-    const filled = input.template
-      .replaceAll(PLACEHOLDER_REGEX, (_, index) => fill(Number(index)))
-      // A function replacement keeps `$&`, `$$` and friends in arguments literal.
-      .replaceAll("$ARGUMENTS", () => input.arguments)
-    const appended = positions.length === 0 && !usesArguments && input.arguments.trim() !== ""
+    // One pass over the template: argument text is inserted once and never scanned
+    // again. A function replacement also keeps `$&`, `$$` and friends literal.
+    const filled = input.template.replaceAll(PLACEHOLDER_REGEX, fill)
+    const appended = placeholders.length === 0 && input.arguments.trim() !== ""
     const pieces = (appended ? filled + "\n\n" + input.arguments : filled).split(SHELL_REGEX)
     // split() with a capture group alternates text and shell commands: odd indexes are commands.
     const commands = pieces.filter((_, index) => index % 2 === 1)
@@ -87,10 +90,7 @@ export function expand<E, R>(input: { template: string; arguments: string; shell
       .trim()
     return {
       text,
-      arguments: hints(input.template).map((placeholder) => ({
-        placeholder,
-        value: placeholder === "$ARGUMENTS" ? input.arguments : fill(Number(placeholder.slice(1))),
-      })),
+      arguments: placeholders.map((placeholder) => ({ placeholder, value: fill(placeholder) })),
       appended,
       shell: commands.map((command, index) => {
         const result = results[index]

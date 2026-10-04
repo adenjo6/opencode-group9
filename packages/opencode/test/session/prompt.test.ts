@@ -1909,7 +1909,7 @@ const expansionCases = [
     name: "reexpanded",
     template: "First: $1 / All: $ARGUMENTS",
     arguments: `"x $ARGUMENTS"`,
-    sent: `First: x "x $ARGUMENTS" / All: "x $ARGUMENTS"`,
+    sent: `First: x $ARGUMENTS / All: "x $ARGUMENTS"`,
   },
   { name: "replacement-pattern", template: "Echo: $ARGUMENTS", arguments: "a$&b", sent: "Echo: a$&b" },
   { name: "zero", template: "Run $0 now", arguments: "a b", sent: "Run b now" },
