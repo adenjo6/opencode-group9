@@ -13,6 +13,7 @@ import { NamedError } from "@opencode-ai/core/util/error"
 import { Agent as AgentSvc } from "../../src/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { Command } from "../../src/command"
+import { CommandTemplate } from "@opencode-ai/core/command-template"
 import { Config } from "@/config/config"
 import { LSP } from "@/lsp/lsp"
 import { MCP } from "../../src/mcp"
@@ -1905,6 +1906,10 @@ const expansionCases = [
   { name: "two-digit", template: "A $1 B $10", arguments: "a b c", sent: "A a B" },
   { name: "image", template: "Look at $1 and $2", arguments: "[Image 1] now", sent: "Look at [Image 1] and now" },
   { name: "trim", template: "  $ARGUMENTS  ", arguments: "x", sent: "x" },
+  { name: "unbalanced-quote", template: "A $1 B $2", arguments: `say "unterminated`, sent: "A say B unterminated" },
+  { name: "unicode", template: "Hi $1", arguments: "héllo 🌍", sent: "Hi héllo 🌍" },
+  { name: "backslash", template: "Open $1", arguments: "C:\\dir\\file.txt", sent: "Open C:\\dir\\file.txt" },
+  { name: "tab", template: "[$ARGUMENTS]", arguments: "a\tb", sent: "[a\tb]" },
   {
     name: "reexpanded",
     template: "First: $1 / All: $ARGUMENTS",
@@ -1973,6 +1978,49 @@ unix(
         expect(yield* sendCases(shellExpansionCases)).toEqual(
           shellExpansionCases.map((item) => ({ name: item.name, sent: item.sent })),
         )
+      }),
+    ),
+  30_000,
+)
+
+const previewCases = Effect.fn("test.previewCases")(function* (
+  cases: readonly { name: string; arguments: string }[],
+  shell: (commands: Command.Interface) => CommandTemplate.ShellStrategy,
+) {
+  const commands = yield* Command.Service
+  return yield* Effect.forEach(cases, (item) =>
+    Effect.gen(function* () {
+      const info = yield* commands.get(item.name)
+      if (!info) throw new Error(`missing command ${item.name}`)
+      const expansion = yield* commands.expand(info, { arguments: item.arguments, shell: shell(commands) })
+      return { name: item.name, sent: expansion.text }
+    }),
+  )
+})
+
+it.instance(
+  "command preview matches the sent text character for character",
+  () =>
+    Effect.gen(function* () {
+      const sent = yield* sendCases(expansionCases)
+      expect(sent).toEqual(yield* previewCases(expansionCases, () => CommandTemplate.deferShell))
+    }),
+  30_000,
+)
+
+unix(
+  "command preview defers shell blocks unless asked to run them",
+  () =>
+    withSh(() =>
+      Effect.gen(function* () {
+        const sent = yield* sendCases(shellExpansionCases)
+        expect(sent).toEqual(yield* previewCases(shellExpansionCases, (commands) => commands.runShell))
+        expect(yield* previewCases(shellExpansionCases, () => CommandTemplate.deferShell)).toEqual([
+          { name: "shell", sent: "Say !`echo hi`" },
+          { name: "shell-inline", sent: "!`printf a` and !`printf b`" },
+          { name: "shell-argument", sent: "Say !`printf hello`" },
+          { name: "injected", sent: "Echo: !`printf pwned`" },
+        ])
       }),
     ),
   30_000,
