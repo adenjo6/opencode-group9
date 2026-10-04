@@ -30,7 +30,8 @@ describe("CommandTemplate.expand", () => {
     { template: "Echo: $ARGUMENTS", arguments: "a$&b $$ $'", text: "Echo: a$&b $$ $'" },
     { template: "Echo: $ARGUMENTS", arguments: "!`printf pwned`", text: "Echo: !`printf pwned`" },
     { template: "Review", arguments: "!`printf pwned`", text: "Review\n\n!`printf pwned`" },
-    { template: "Run $0 now", arguments: "a b", text: "Run b now" },
+    { template: "Run $0 now", arguments: "a b", text: "Run $0 now\n\na b" },
+    { template: "Run $0 with $1", arguments: "a b", text: "Run $0 with a b" },
   ]
 
   for (const item of cases) {

@@ -4,11 +4,13 @@ import { Effect, Schema } from "effect"
 
 // The command template language lives here and nowhere else:
 // - `$1`, `$2`, ... take one parsed argument each; the highest one takes the rest.
+//   `$0` is not a placeholder and stays as written.
 // - `$ARGUMENTS` takes the argument string exactly as typed.
 // - `` !`command` `` is replaced with the command's output by a ShellStrategy.
 // - A template without placeholders gets the arguments appended after a blank line.
 export const SHELL_REGEX = /!`([^`]+)`/g
-const PLACEHOLDER_REGEX = /\$(?:ARGUMENTS|\d+)/g
+const NUMBERED_REGEX = /\$[1-9]\d*/g
+const PLACEHOLDER_REGEX = /\$(?:ARGUMENTS|[1-9]\d*)/g
 // `[Image N]` stays one token, quotes group words, anything else splits on whitespace.
 const ARGUMENT_REGEX = /(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)/gi
 const QUOTE_REGEX = /^["']|["']$/g
@@ -52,7 +54,7 @@ export function parseArguments(input: string) {
 
 /** The placeholders a template uses, in the order an interface should list them. */
 export function hints(template: string) {
-  const numbered = [...new Set(template.match(/\$\d+/g) ?? [])].sort()
+  const numbered = [...new Set(template.match(NUMBERED_REGEX) ?? [])].sort()
   if (template.includes("$ARGUMENTS")) return [...numbered, "$ARGUMENTS"]
   return numbered
 }
