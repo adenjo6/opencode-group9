@@ -70,7 +70,8 @@ export function expand<E, R>(input: { template: string; arguments: string; shell
     const usesArguments = input.template.includes("$ARGUMENTS")
     const filled = input.template
       .replaceAll(PLACEHOLDER_REGEX, (_, index) => fill(Number(index)))
-      .replaceAll("$ARGUMENTS", input.arguments)
+      // A function replacement keeps `$&`, `$$` and friends in arguments literal.
+      .replaceAll("$ARGUMENTS", () => input.arguments)
     const appended = positions.length === 0 && !usesArguments && input.arguments.trim() !== ""
     const pieces = (appended ? filled + "\n\n" + input.arguments : filled).split(SHELL_REGEX)
     // split() with a capture group alternates text and shell commands: odd indexes are commands.
