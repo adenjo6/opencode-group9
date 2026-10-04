@@ -54,7 +54,9 @@ export function parseArguments(input: string) {
 
 /** The placeholders a template uses, in the order an interface should list them. */
 export function hints(template: string) {
-  const numbered = [...new Set(template.match(NUMBERED_REGEX) ?? [])].sort()
+  const numbered = [...new Set(template.match(NUMBERED_REGEX) ?? [])].sort(
+    (a, b) => Number(a.slice(1)) - Number(b.slice(1)),
+  )
   if (template.includes("$ARGUMENTS")) return [...numbered, "$ARGUMENTS"]
   return numbered
 }

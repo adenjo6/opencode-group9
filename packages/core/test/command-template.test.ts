@@ -100,6 +100,8 @@ describe("CommandTemplate.hints", () => {
   it.effect("lists numbered placeholders once, then $ARGUMENTS", () =>
     Effect.sync(() => {
       expect(CommandTemplate.hints("$2 then $1, $1 and $ARGUMENTS")).toEqual(["$1", "$2", "$ARGUMENTS"])
+      expect(CommandTemplate.hints("$10 $2 $1")).toEqual(["$1", "$2", "$10"])
+      expect(CommandTemplate.hints("$0 is not a placeholder")).toEqual([])
       expect(CommandTemplate.hints("no placeholders")).toEqual([])
     }),
   )
