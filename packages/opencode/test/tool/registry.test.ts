@@ -94,6 +94,45 @@ const withEmptyCodeMode = testEffect(
   ]),
 )
 const withBrokenPlugin = testEffect(LayerNode.compile(root, [...replacements, [Plugin.node, brokenPluginLayer]]))
+const withToolChoice = testEffect(
+  LayerNode.compile(root, [
+    [
+      Config.node,
+      TestConfig.layer({
+        directories: () => InstanceState.directory.pipe(Effect.map((dir) => [path.join(dir, ".opencode")])),
+        get: () =>
+          Effect.succeed({
+            provider: {
+              openai: {
+                models: {
+                  "gpt-5": { tool_choice: "edit_write" },
+                  "claude-sonnet-4": { tool_choice: "apply_patch" },
+                  alias: { id: "gpt-5.4", tool_choice: "edit_write" },
+                },
+              },
+              opencode: {
+                models: {
+                  "gpt-5": { tool_choice: "edit_write" },
+                },
+              },
+            },
+          }),
+      }),
+    ],
+    [RuntimeFlags.node, RuntimeFlags.layer()],
+  ]),
+)
+
+const attached = (providerID: ProviderV2.ID, modelID: string) =>
+  Effect.gen(function* () {
+    const registry = yield* ToolRegistry.Service
+    const agents = yield* Agent.Service
+    return (yield* registry.tools({
+      providerID,
+      modelID: ModelV2.ID.make(modelID),
+      agent: yield* agents.defaultInfo(),
+    })).map((tool) => tool.id)
+  })
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -567,6 +606,66 @@ describe("tool.registry", () => {
       const registry = yield* ToolRegistry.Service
       const ids = yield* registry.ids()
       expect(ids).toContain("cowsay")
+    }),
+  )
+
+  withToolChoice.instance("uses apply_patch for gpt models when tool_choice is omitted", () =>
+    Effect.gen(function* () {
+      const ids = yield* attached(ProviderV2.ID.make("openai"), "gpt-5.1")
+      expect(ids).toContain("apply_patch")
+      expect(ids).not.toContain("edit")
+      expect(ids).not.toContain("write")
+      expect(ids).not.toContain("websearch")
+    }),
+  )
+
+  withToolChoice.instance("keeps edit and write for gpt-4 and non-gpt models when tool_choice is omitted", () =>
+    Effect.gen(function* () {
+      const gpt4 = yield* attached(ProviderV2.ID.make("openai"), "gpt-4o")
+      const claude = yield* attached(ProviderV2.ID.make("openai"), "claude-sonnet-4.5")
+      expect(gpt4).toContain("edit")
+      expect(gpt4).toContain("write")
+      expect(gpt4).not.toContain("apply_patch")
+      expect(claude).toContain("edit")
+      expect(claude).toContain("write")
+      expect(claude).not.toContain("apply_patch")
+    }),
+  )
+
+  withToolChoice.instance("overrides a gpt model to edit and write", () =>
+    Effect.gen(function* () {
+      const ids = yield* attached(ProviderV2.ID.make("openai"), "gpt-5")
+      expect(ids).toContain("edit")
+      expect(ids).toContain("write")
+      expect(ids).not.toContain("apply_patch")
+    }),
+  )
+
+  withToolChoice.instance("overrides a non-gpt model to apply_patch", () =>
+    Effect.gen(function* () {
+      const ids = yield* attached(ProviderV2.ID.make("openai"), "claude-sonnet-4")
+      expect(ids).toContain("apply_patch")
+      expect(ids).not.toContain("edit")
+      expect(ids).not.toContain("write")
+    }),
+  )
+
+  withToolChoice.instance("reads tool_choice from the model api id", () =>
+    Effect.gen(function* () {
+      const ids = yield* attached(ProviderV2.ID.make("openai"), "gpt-5.4")
+      expect(ids).toContain("edit")
+      expect(ids).toContain("write")
+      expect(ids).not.toContain("apply_patch")
+    }),
+  )
+
+  withToolChoice.instance("keeps websearch when edit tools are overridden", () =>
+    Effect.gen(function* () {
+      const ids = yield* attached(ProviderV2.ID.opencode, "gpt-5")
+      expect(ids).toContain("websearch")
+      expect(ids).toContain("edit")
+      expect(ids).toContain("write")
+      expect(ids).not.toContain("apply_patch")
     }),
   )
 })
