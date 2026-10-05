@@ -77,15 +77,17 @@ Remaining validation work is an explicit equal-timestamp tie-break test, a query
 
 #### @thdxg — slash-command preview
 
-Added a shared command-template expansion module, a session-free command-preview API, generated SDK support, and live TUI preview of slash-command expansion. Combined tests cover argument parsing and substitution, deferred and executed shell blocks, prompt parity, the HTTP API, and TUI command parsing.
+Added a live TUI preview of slash commands, backed by a session-free `POST /command/preview` endpoint. Template expansion moved out of the send path into a shared Core module, so preview and send produce the same text. Expansion takes a shell strategy: preview leaves `` !`...` `` blocks pending, send runs them.
 
-No integration-time design change or unfinished combined-code work was identified. The author's revised RFC remains the authority for any individual design changes not represented in this repository.
+Changes from the RFC are minor: hints now sort numerically, and the TUI does not expose the endpoint's option to run shell blocks in preview.
+
+Remaining: placeholders inside a template's own shell block are not escaped (the RFC's open question), and `/init`, `/review`, skills, and MCP commands were covered by automated tests but not run by hand.
 
 #### @RegMCS — configurable edit-tool selection
 
 Added provider `tool_choice` configuration, selection between `apply_patch` and `edit`/`write`, preservation of unrelated tools, and display of the selected choice in the models command. Combined tests cover defaults, explicit overrides, API-ID lookup, and registry behavior.
 
-Integration required regenerating the combined SDK so its provider type retained `tool_choice`. No other integration-time design change or unfinished combined-code work was identified. The author's revised RFC remains the authority for any individual design changes not represented in this repository.
+There were no significant changes from the previous RFC. Implementation detail wise is the same as what was proposed. Slightly modification on the expected benefits of the change as OCP was no longer appropriate to be listed. We also change the test cases to cover explicitly all the edge cases suggested by AI
 
 Added provider `tool_choice` configuration, selection between `apply_patch` and `edit`/`write`, preservation of unrelated tools, and display of the selected choice in the models command. Combined tests cover defaults, explicit overrides, API-ID lookup, and registry behavior.
 
