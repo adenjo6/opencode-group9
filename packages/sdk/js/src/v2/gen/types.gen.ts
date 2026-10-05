@@ -1770,6 +1770,7 @@ export type ProviderConfig = {
       reasoning?: boolean
       temperature?: boolean
       tool_call?: boolean
+      tool_choice?: "apply_patch" | "edit_write"
       interleaved?:
         | boolean
         | "reasoning"
