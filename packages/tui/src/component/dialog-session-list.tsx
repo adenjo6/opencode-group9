@@ -18,6 +18,7 @@ import { errorMessage } from "../util/error"
 import { DialogSessionDeleteFailed } from "./dialog-session-delete-failed"
 import { useCommandShortcut } from "../keymap"
 import { useEvent } from "../context/event"
+import type { SessionListItem } from "@opencode-ai/sdk/v2/types"
 
 type SessionListFilter = { scope?: "project"; path?: string }
 
@@ -76,20 +77,20 @@ export function DialogSessionList() {
   )
 
   const currentSessionID = createMemo(() => (route.data.type === "session" ? route.data.sessionID : undefined))
-  const sessions = createMemo(() => {
-    const result = searchResults() ?? browseResults() ?? sync.data.session
+  const sessions = createMemo<SessionListItem[]>(() => {
+    const result: SessionListItem[] = searchResults() ?? browseResults() ?? sync.data.session
     const synced = new Map(sync.data.session.map((session) => [session.id, session]))
     const ids = new Set(result.map((session) => session.id))
-    const extra = [currentSessionID(), ...local.session.pinned()].flatMap((id) => {
+    const extra = (search() ? [] : [currentSessionID(), ...local.session.pinned()]).flatMap((id) => {
       if (!id || ids.has(id)) return []
       const session = synced.get(id)
       if (session) ids.add(id)
       return session ? [session] : []
     })
-    const query = search().trim().toLowerCase()
-    return [...result.map((session) => synced.get(session.id) ?? session), ...extra]
-      .filter((session) => !deleted().has(session.id))
-      .filter((session) => !query || session.title.toLowerCase().includes(query))
+    return [
+      ...result.map((session) => ({ ...(synced.get(session.id) ?? session), match: session.match })),
+      ...extra,
+    ].filter((session) => !deleted().has(session.id))
   })
 
   onCleanup(
@@ -244,6 +245,7 @@ export function DialogSessionList() {
           : undefined
       return {
         title: isDeleting ? `Press ${deleteHint()} again to confirm` : x.title,
+        details: x.match?.field === "message" ? [x.match.preview] : undefined,
         bg: isDeleting ? theme.error : undefined,
         value: x.id,
         category,

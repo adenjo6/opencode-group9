@@ -166,7 +166,7 @@ export function applyHomeSessionEvent(sessions: Session[], event: HomeSessionEve
   return sessions.with(index, info)
 }
 
-function toLegacySummary(session: SessionV2Info): Session {
+export function toLegacySummary(session: SessionV2Info): Session {
   return {
     id: session.id,
     slug: session.id,
