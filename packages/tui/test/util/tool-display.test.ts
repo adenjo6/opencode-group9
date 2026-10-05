@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { toolDisplayMetadata, webSearchProviderLabel } from "../../src/util/tool-display"
+import { editMatchLabel, toolDisplayMetadata, webSearchProviderLabel } from "../../src/util/tool-display"
 
 describe("webSearchProviderLabel", () => {
   test("labels known providers", () => {
@@ -37,4 +37,27 @@ describe("toolDisplayMetadata", () => {
     expect(toolDisplayMetadata({ status: "completed", structured: [] })).toEqual({})
     expect(toolDisplayMetadata(undefined)).toEqual({})
   })
+})
+
+describe("editMatchLabel", () => {
+  test("labels non-exact matches with fidelity and strategy", () => {
+    expect(editMatchLabel({ strategy: "line-trimmed", fidelity: "whitespace", matched: "x" })).toBe(
+      "whitespace match (line-trimmed)",
+    )
+  })
+
+  test("hides exact matches", () => {
+    expect(editMatchLabel({ strategy: "exact", fidelity: "exact", matched: "x" })).toBeUndefined()
+  })
+
+  for (const [name, match] of [
+    ["undefined", undefined],
+    ["null", null],
+    ["missing fidelity", { strategy: "line-trimmed" }],
+    ["non-string strategy", { strategy: 1, fidelity: "whitespace" }],
+  ] as const) {
+    test(`hides ${name}`, () => {
+      expect(editMatchLabel(match)).toBeUndefined()
+    })
+  }
 })
