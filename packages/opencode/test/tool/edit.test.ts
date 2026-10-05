@@ -1,9 +1,9 @@
-import { afterEach, describe, expect } from "bun:test"
+import { afterEach, describe, expect, test } from "bun:test"
 import path from "path"
 import fs from "fs/promises"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Cause, Deferred, Effect, Exit, Fiber, Layer } from "effect"
-import { EditTool } from "../../src/tool/edit"
+import { EditTool, replace } from "../../src/tool/edit"
 import { disposeAllInstances, TestInstance } from "../fixture/fixture"
 import { LSP } from "@/lsp/lsp"
 import { FSUtil } from "@opencode-ai/core/fs-util"
@@ -568,6 +568,153 @@ describe("tool.edit", () => {
         ])
 
         expect(yield* load(filepath)).toBe("top = 1\nmiddle = keep\nbottom = 2\n")
+      }),
+    )
+  })
+
+  describe("failure messages", () => {
+    it.instance("not found keeps today's message", () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const filepath = path.join(test.directory, "file.txt")
+        yield* put(filepath, "a = 1\n")
+        const err = yield* fail({ filePath: filepath, oldString: "zzz", newString: "y" })
+        expect(err.message).toBe(
+          "Could not find oldString in the file. It must match exactly, including whitespace, indentation, and line endings.",
+        )
+      }),
+    )
+
+    it.instance("ambiguous keeps today's message", () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const filepath = path.join(test.directory, "file.txt")
+        yield* put(filepath, "a = 1\nb = 2\na = 1\n")
+        const err = yield* fail({ filePath: filepath, oldString: "a = 1", newString: "a = 2" })
+        expect(err.message).toBe(
+          "Found multiple matches for oldString. Provide more surrounding context to make the match unique.",
+        )
+      }),
+    )
+
+    it.instance("disproportionate keeps today's message", () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const filepath = path.join(test.directory, "file.txt")
+        yield* put(filepath, "a {\n  x\n  " + "y".repeat(600) + "\n}\n")
+        const err = yield* fail({ filePath: filepath, oldString: "a {\n  x\n}", newString: "b" })
+        expect(err.message).toBe(
+          "Refusing replacement because the matched span is much larger than oldString. Re-read the file and provide the full exact oldString for the intended replacement.",
+        )
+      }),
+    )
+  })
+
+  describe("replace result", () => {
+    test("exact match is reported as exact", () => {
+      expect(replace("a = 1\n", "a = 1", "a = 2")).toEqual({
+        kind: "applied",
+        content: "a = 2\n",
+        match: { strategy: "exact", fidelity: "exact", matched: "a = 1" },
+      })
+    })
+
+    test("extra internal spaces match as whitespace", () => {
+      expect(replace("const  x = 1\n", "const x = 1", "NEW")).toMatchObject({
+        kind: "applied",
+        content: "NEW\n",
+        match: { strategy: "whitespace-normalized", fidelity: "whitespace" },
+      })
+    })
+
+    test("different indentation matches as whitespace", () => {
+      const content = "class A {\n    foo() {\n        return 1\n    }\n}\n"
+      expect(replace(content, "foo() {\n    return 1\n}", "NEW")).toMatchObject({
+        kind: "applied",
+        content: "class A {\nNEW\n}\n",
+        match: { strategy: "line-trimmed", fidelity: "whitespace", matched: "    foo() {\n        return 1\n    }" },
+      })
+    })
+
+    test("escaped quotes match as escape", () => {
+      expect(replace('console.log("hi")\n', 'console.log(\\"hi\\")', "NEW")).toMatchObject({
+        kind: "applied",
+        content: "NEW\n",
+        match: { strategy: "escape-normalized", fidelity: "escape" },
+      })
+    })
+
+    // Under the old order block-anchor (approximate) won this; whitespace-normalized now runs first.
+    test("stricter whitespace strategy beats block-anchor", () => {
+      const content = "function f() {\n  const  x = 1\n}\n"
+      expect(replace(content, "function f() {\n  const x = 1\n}", "NEW")).toMatchObject({
+        kind: "applied",
+        match: { strategy: "whitespace-normalized", fidelity: "whitespace" },
+      })
+    })
+
+    test("missing text is not-found", () => {
+      expect(replace("a = 1\n", "zzz", "y")).toEqual({ kind: "not-found" })
+    })
+
+    test("text found twice is ambiguous", () => {
+      expect(replace("a = 1\nb = 2\na = 1\n", "a = 1", "a = 2")).toEqual({ kind: "ambiguous" })
+    })
+
+    // Every looser strategy yields the same duplicated span, so falling through never picks one copy.
+    test("exact duplicate block stays ambiguous through looser strategies", () => {
+      const content = "x\n  if (a) {\n    go()\n  }\ny\n  if (a) {\n    go()\n  }\n"
+      expect(replace(content, "  if (a) {\n    go()\n  }", "NEW")).toEqual({ kind: "ambiguous" })
+    })
+
+    test("oversized match is disproportionate", () => {
+      expect(replace("a {\n  x\n  " + "y".repeat(600) + "\n}\n", "a {\n  x\n}", "b")).toEqual({
+        kind: "disproportionate",
+      })
+    })
+  })
+
+  describe("match reporting", () => {
+    const record = () => {
+      const asks: Parameters<Tool.Context["ask"]>[0][] = []
+      const metas: Parameters<Tool.Context["metadata"]>[0][] = []
+      const spy = {
+        ...ctx,
+        ask: (input: (typeof asks)[number]) => Effect.sync(() => void asks.push(input)),
+        metadata: (input: (typeof metas)[number]) => Effect.sync(() => void metas.push(input)),
+      }
+      return { asks, metas, spy }
+    }
+
+    it.instance("exact match keeps today's output", () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const filepath = path.join(test.directory, "file.txt")
+        yield* put(filepath, "a = 1\n")
+        const r = record()
+        const result = yield* run({ filePath: filepath, oldString: "a = 1", newString: "a = 2" }, r.spy)
+        expect(result.output).toBe("Edit applied successfully.")
+        expect(r.asks[0]?.metadata).toMatchObject({ match: { strategy: "exact", fidelity: "exact" } })
+        expect(yield* load(filepath)).toBe("a = 2\n")
+      }),
+    )
+
+    it.instance("loose match names the same strategy everywhere", () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const filepath = path.join(test.directory, "file.txt")
+        yield* put(filepath, "class A {\n    foo() {\n        return 1\n    }\n}\n")
+        const r = record()
+        const result = yield* run(
+          { filePath: filepath, oldString: "foo() {\n    return 1\n}", newString: "foo() {\n    return 2\n}" },
+          r.spy,
+        )
+        const match = { strategy: "line-trimmed", fidelity: "whitespace" }
+        expect(r.asks[0]?.metadata).toMatchObject({ match })
+        expect(r.metas.at(-1)?.metadata).toMatchObject({ match })
+        expect(result.metadata).toMatchObject({ match })
+        expect(result.output).toContain("line-trimmed")
+        expect(result.output).toContain("whitespace")
       }),
     )
   })

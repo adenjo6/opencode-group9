@@ -484,6 +484,15 @@
     unicode-bidi: isolate;
   }
 
+  [data-slot="message-part-match"] {
+    flex-shrink: 0;
+    font-family: var(--font-family-mono);
+    font-size: 12px;
+    font-weight: var(--font-weight-regular);
+    color: var(--icon-warning-base);
+    white-space: nowrap;
+  }
+
   [data-slot="message-part-path"] {
     display: flex;
     flex-grow: 1;
@@ -790,6 +799,13 @@
     line-height: var(--line-height-large);
     color: var(--v2-text-text-muted);
     padding: 0;
+  }
+
+  [data-slot="permission-match"] {
+    font-family: var(--font-family-mono);
+    font-size: 12px;
+    color: var(--icon-warning-base);
+    margin-top: 8px;
   }
 
   [data-slot="permission-patterns"] {

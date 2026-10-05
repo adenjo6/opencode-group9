@@ -89,6 +89,23 @@ Added provider `tool_choice` configuration, selection between `apply_patch` and 
 
 There were no significant changes from the previous RFC. Implementation detail wise is the same as what was proposed. Slightly modification on the expected benefits of the change as OCP was no longer appropriate to be listed. We also change the test cases to cover explicitly all the edge cases suggested by AI
 
+
+
+#### @adenjo6 — Edit tool: show the model how its edit actually matched
+
+##### What changed
+
+The Edit tool used to fall back to loose matching whenever `oldString` didn't match exactly, and it reported "success" either way. Now the matching strategies are ranked from strictest to loosest, and each has a name and a fidelity level: exact, whitespace, escape, or approximate. `replace()` returns a result that names the strategy that matched. When a match isn't exact, the model gets a note about it, the strategy is saved in metadata, and a badge appears in both the TUI and the web UI, on the permission prompt and on the finished edit.
+
+##### Testing
+
+All tests pass: 43 Edit tests, 15 TUI tests, and 6 session-ui tests. Typecheck is clean in all 4 packages. I also checked it by hand. An edit with the wrong indentation used to succeed silently and lose the indentation; now it shows a `line-trimmed` badge. A wrong middle line is reported as `block-anchor` / approximate. Exact edits behave the same as before.
+
+##### Differences from the RFC
+
+The web badge shows the raw strategy labels instead of translated text. The badge helper is duplicated in `tui` and `session-ui` rather than shared. Exact matches now also store `strategy: "exact"`, which makes no visible difference.
+
+
 ### Installation
 
 ```bash

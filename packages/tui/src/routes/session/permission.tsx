@@ -11,7 +11,7 @@ import { useSync } from "../../context/sync"
 import { useProject } from "../../context/project"
 import { filetype } from "../../util/filetype"
 import { Locale } from "../../util/locale"
-import { webSearchProviderLabel } from "../../util/tool-display"
+import { editMatchLabel, webSearchProviderLabel } from "../../util/tool-display"
 import { getScrollAcceleration } from "../../util/scroll"
 import { useTuiConfig } from "../../config"
 import { OPENCODE_BASE_MODE, useBindings, useCommandShortcut } from "../../keymap"
@@ -34,6 +34,7 @@ function EditBody(props: { request: PermissionRequest }) {
     const value = props.request.metadata?.diff
     return typeof value === "string" ? value : ""
   })
+  const matchLabel = createMemo(() => editMatchLabel(props.request.metadata?.match))
 
   const view = createMemo(() => {
     const diffStyle = config.diff_style
@@ -46,6 +47,11 @@ function EditBody(props: { request: PermissionRequest }) {
 
   return (
     <box flexDirection="column" gap={1}>
+      <Show when={matchLabel()}>
+        <box paddingLeft={1}>
+          <text fg={theme.warning}>⚠ {matchLabel()}</text>
+        </box>
+      </Show>
       <Show when={diff()}>
         <scrollbox
           height="100%"

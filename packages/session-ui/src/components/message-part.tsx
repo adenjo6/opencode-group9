@@ -61,6 +61,7 @@ import { TextShimmer } from "@opencode-ai/ui/text-shimmer"
 import { AnimatedCountList } from "./tool-count-summary"
 import { ToolStatusTitle } from "./tool-status-title"
 import { patchFiles } from "./apply-patch-file"
+import { editMatchLabel } from "./edit-match"
 import { partDefaultOpen } from "./part-default-open"
 import { animate } from "motion"
 import { attached, inline, kind, typeLabel } from "./message-file"
@@ -2161,6 +2162,7 @@ ToolRegistry.register({
     const path = createMemo(() => props.metadata?.filediff?.file || props.input.filePath || "")
     const filename = () => getFilename(props.input.filePath ?? "")
     const pending = () => props.status === "pending" || props.status === "running"
+    const matchLabel = createMemo(() => editMatchLabel(props.metadata?.match))
     const diffSource = createMemo(
       () => {
         const filediff = props.metadata?.filediff
@@ -2224,6 +2226,9 @@ ToolRegistry.register({
                 </Show>
               </div>
               <div data-slot="message-part-actions">
+                <Show when={!pending() && matchLabel()}>
+                  <code data-slot="message-part-match">{matchLabel()}</code>
+                </Show>
                 <Show when={!pending() && props.metadata.filediff}>
                   <DiffChanges changes={props.metadata.filediff} />
                 </Show>

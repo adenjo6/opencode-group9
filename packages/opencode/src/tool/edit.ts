@@ -85,6 +85,7 @@ export const EditTool = Tool.define(
           let diff = ""
           let contentOld = ""
           let contentNew = ""
+          let match: Match | undefined
           yield* lock(filePath).withPermits(1)(
             Effect.gen(function* () {
               if (params.oldString === "") {
@@ -130,7 +131,24 @@ export const EditTool = Tool.define(
               const old = convertToLineEnding(normalizeLineEndings(params.oldString), ending)
               const replacement = convertToLineEnding(normalizeLineEndings(params.newString), ending)
 
-              const next = Bom.split(replace(contentOld, old, replacement, params.replaceAll))
+              const result = replace(contentOld, old, replacement, params.replaceAll)
+              if (result.kind === "not-found") {
+                throw new Error(
+                  "Could not find oldString in the file. It must match exactly, including whitespace, indentation, and line endings.",
+                )
+              }
+              if (result.kind === "ambiguous") {
+                throw new Error(
+                  "Found multiple matches for oldString. Provide more surrounding context to make the match unique.",
+                )
+              }
+              if (result.kind === "disproportionate") {
+                throw new Error(
+                  "Refusing replacement because the matched span is much larger than oldString. Re-read the file and provide the full exact oldString for the intended replacement.",
+                )
+              }
+              match = result.match
+              const next = Bom.split(result.content)
               const desiredBom = source.bom || next.bom
               contentNew = next.text
 
@@ -149,6 +167,7 @@ export const EditTool = Tool.define(
                 metadata: {
                   filepath: filePath,
                   diff,
+                  match,
                 },
               })
 
@@ -190,10 +209,14 @@ export const EditTool = Tool.define(
               diff,
               filediff,
               diagnostics: {},
+              match,
             },
           })
 
           let output = "Edit applied successfully."
+          if (match && match.fidelity !== "exact") {
+            output += ` Note: oldString did not match the file exactly. It was matched by the ${match.strategy} strategy (${match.fidelity} fidelity), so verify the replaced text is what you intended.`
+          }
           yield* lsp.touchFile(filePath, "document")
           const diagnostics = yield* lsp.diagnostics()
           const normalizedFilePath = FSUtil.normalizePath(filePath)
@@ -205,6 +228,7 @@ export const EditTool = Tool.define(
               diagnostics,
               diff,
               filediff,
+              match,
             },
             title: `${path.relative(instance.worktree, filePath)}`,
             output,
@@ -679,7 +703,37 @@ export function trimDiff(diff: string): string {
   return trimmedLines.join("\n")
 }
 
-export function replace(content: string, oldString: string, newString: string, replaceAll = false): string {
+// Strictest first. Each level guarantees less about how closely the matched text resembles oldString:
+// exact: identical characters. whitespace: same non-whitespace characters in the same order.
+// escape: identical after unescaping. approximate: only the anchor lines are known to match.
+const fidelities = ["exact", "whitespace", "escape", "approximate"] as const
+export type Fidelity = (typeof fidelities)[number]
+
+// Strategies are ranked by fidelity, so a looser strategy can never win over a stricter one that matches.
+// toSorted is stable, so strategies within one fidelity keep this table's order.
+const strategies = (
+  [
+    { name: "exact", fidelity: "exact", find: SimpleReplacer },
+    { name: "multi-occurrence", fidelity: "exact", find: MultiOccurrenceReplacer },
+    { name: "line-trimmed", fidelity: "whitespace", find: LineTrimmedReplacer },
+    { name: "whitespace-normalized", fidelity: "whitespace", find: WhitespaceNormalizedReplacer },
+    { name: "trimmed-boundary", fidelity: "whitespace", find: TrimmedBoundaryReplacer },
+    { name: "indentation-flexible", fidelity: "whitespace", find: IndentationFlexibleReplacer },
+    { name: "escape-normalized", fidelity: "escape", find: EscapeNormalizedReplacer },
+    { name: "block-anchor", fidelity: "approximate", find: BlockAnchorReplacer },
+    { name: "context-aware", fidelity: "approximate", find: ContextAwareReplacer },
+  ] satisfies { name: string; fidelity: Fidelity; find: Replacer }[]
+).toSorted((a, b) => fidelities.indexOf(a.fidelity) - fidelities.indexOf(b.fidelity))
+
+export type Match = { strategy: string; fidelity: Fidelity; matched: string }
+
+export type ReplaceResult =
+  | { kind: "applied"; content: string; match: Match }
+  | { kind: "not-found" }
+  | { kind: "ambiguous" }
+  | { kind: "disproportionate" }
+
+export function replace(content: string, oldString: string, newString: string, replaceAll = false): ReplaceResult {
   if (oldString === newString) {
     throw new Error("No changes to apply: oldString and newString are identical.")
   }
@@ -691,41 +745,28 @@ export function replace(content: string, oldString: string, newString: string, r
 
   let notFound = true
 
-  for (const replacer of [
-    SimpleReplacer,
-    LineTrimmedReplacer,
-    BlockAnchorReplacer,
-    WhitespaceNormalizedReplacer,
-    IndentationFlexibleReplacer,
-    EscapeNormalizedReplacer,
-    TrimmedBoundaryReplacer,
-    ContextAwareReplacer,
-    MultiOccurrenceReplacer,
-  ]) {
-    for (const search of replacer(content, oldString)) {
+  for (const strategy of strategies) {
+    for (const search of strategy.find(content, oldString)) {
       const index = content.indexOf(search)
       if (index === -1) continue
       notFound = false
-      if (isDisproportionateMatch(search, oldString)) {
-        throw new Error(
-          "Refusing replacement because the matched span is much larger than oldString. Re-read the file and provide the full exact oldString for the intended replacement.",
-        )
-      }
+      if (isDisproportionateMatch(search, oldString)) return { kind: "disproportionate" }
+      const match = { strategy: strategy.name, fidelity: strategy.fidelity, matched: search }
       if (replaceAll) {
-        return content.replaceAll(search, newString)
+        return { kind: "applied", content: content.replaceAll(search, newString), match }
       }
       const lastIndex = content.lastIndexOf(search)
       if (index !== lastIndex) continue
-      return content.substring(0, index) + newString + content.substring(index + search.length)
+      return {
+        kind: "applied",
+        content: content.substring(0, index) + newString + content.substring(index + search.length),
+        match,
+      }
     }
   }
 
-  if (notFound) {
-    throw new Error(
-      "Could not find oldString in the file. It must match exactly, including whitespace, indentation, and line endings.",
-    )
-  }
-  throw new Error("Found multiple matches for oldString. Provide more surrounding context to make the match unique.")
+  if (notFound) return { kind: "not-found" }
+  return { kind: "ambiguous" }
 }
 
 function isDisproportionateMatch(search: string, oldString: string) {
