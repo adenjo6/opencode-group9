@@ -87,6 +87,25 @@ Added provider `tool_choice` configuration, selection between `apply_patch` and 
 
 Integration required regenerating the combined SDK so its provider type retained `tool_choice`. No other integration-time design change or unfinished combined-code work was identified. The author's revised RFC remains the authority for any individual design changes not represented in this repository.
 
+Added provider `tool_choice` configuration, selection between `apply_patch` and `edit`/`write`, preservation of unrelated tools, and display of the selected choice in the models command. Combined tests cover defaults, explicit overrides, API-ID lookup, and registry behavior.
+
+Integration required regenerating the combined SDK so its provider type retained `tool_choice`. No other integration-time design change or unfinished combined-code work was identified. The author's revised RFC remains the authority for any individual design changes not represented in this repository.
+
+#### @adenjo6 — Edit tool: show the model how its edit actually matched
+
+##### What changed
+
+The Edit tool used to fall back to loose matching whenever `oldString` didn't match exactly, and it reported "success" either way. Now the matching strategies are ranked from strictest to loosest, and each has a name and a fidelity level: exact, whitespace, escape, or approximate. `replace()` returns a result that names the strategy that matched. When a match isn't exact, the model gets a note about it, the strategy is saved in metadata, and a badge appears in both the TUI and the web UI, on the permission prompt and on the finished edit.
+
+##### Testing
+
+All tests pass: 43 Edit tests, 15 TUI tests, and 6 session-ui tests. Typecheck is clean in all 4 packages. I also checked it by hand. An edit with the wrong indentation used to succeed silently and lose the indentation; now it shows a `line-trimmed` badge. A wrong middle line is reported as `block-anchor` / approximate. Exact edits behave the same as before.
+
+##### Differences from the RFC
+
+The web badge shows the raw strategy labels instead of translated text. The badge helper is duplicated in `tui` and `session-ui` rather than shared. Exact matches now also store `strategy: "exact"`, which makes no visible difference.
+
+
 ### Installation
 
 ```bash
