@@ -90,7 +90,6 @@ Added provider `tool_choice` configuration, selection between `apply_patch` and 
 There were no significant changes from the previous RFC. Implementation detail wise is the same as what was proposed. Slightly modification on the expected benefits of the change as OCP was no longer appropriate to be listed. We also change the test cases to cover explicitly all the edge cases suggested by AI
 
 
-Integration required regenerating the combined SDK so its provider type retained `tool_choice`. No other integration-time design change or unfinished combined-code work was identified. The author's revised RFC remains the authority for any individual design changes not represented in this repository.
 
 #### @adenjo6 — Edit tool: show the model how its edit actually matched
 
