@@ -56,6 +56,8 @@ import { useTuiConfig } from "../../config"
 import { usePromptWorkspace } from "./workspace"
 import { usePromptMove } from "./move"
 import { readLocalAttachment } from "./local-attachment"
+import { CommandPreview } from "./command-preview"
+import { parseSlashCommand } from "../../prompt/command"
 import { useLocation } from "../../context/location"
 
 registerOpencodeSpinner()
@@ -927,6 +929,28 @@ export function Prompt(props: PromptProps) {
     }
   })
 
+  // The text a submit sends: tracked pasted-text placeholders expanded back to their content.
+  function promptText() {
+    return expandTrackedPastedText(
+      store.prompt.input,
+      input.extmarks.getAllForTypeId(promptPartTypeId).flatMap((extmark) => {
+        const partIndex = store.extmarkToPartIndex.get(extmark.id)
+        const part = partIndex === undefined ? undefined : store.prompt.parts[partIndex]
+        if (part?.type !== "text") return []
+        return [{ start: extmark.start, end: extmark.end, text: part.text }]
+      }),
+    )
+  }
+
+  // Preview a known command once the user starts typing its arguments.
+  const commandPreview = createMemo(() => {
+    if (store.mode !== "normal" || !store.prompt.input.startsWith("/") || !input) return
+    const command = parseSlashCommand(promptText())
+    if (!command?.hasArguments) return
+    if (!sync.data.command.some((x) => x.name === command.name)) return
+    return command
+  })
+
   let submitting = false
   async function submit() {
     // Prevent overlapping invocations (e.g. a double-pressed Enter, or the
@@ -1023,15 +1047,8 @@ export function Prompt(props: PromptProps) {
       sessionID = res.data.id
     }
 
-    const inputText = expandTrackedPastedText(
-      store.prompt.input,
-      input.extmarks.getAllForTypeId(promptPartTypeId).flatMap((extmark) => {
-        const partIndex = store.extmarkToPartIndex.get(extmark.id)
-        const part = partIndex === undefined ? undefined : store.prompt.parts[partIndex]
-        if (part?.type !== "text") return []
-        return [{ start: extmark.start, end: extmark.end, text: part.text }]
-      }),
-    )
+    const inputText = promptText()
+    const slashCommand = parseSlashCommand(inputText)
 
     // Filter out text parts (pasted content) since they're now expanded inline
     const nonTextParts = store.prompt.parts.filter((part) => part.type !== "text")
@@ -1068,22 +1085,12 @@ export function Prompt(props: PromptProps) {
         command: inputText,
       })
       setStore("mode", "normal")
-    } else if (
-      inputText.startsWith("/") &&
-      sync.data.command.some((x) => x.name === inputText.split("\n")[0].split(" ")[0].slice(1))
-    ) {
+    } else if (slashCommand && sync.data.command.some((x) => x.name === slashCommand.name)) {
       move.startSubmit()
-      // Parse command from first line, preserve multi-line content in arguments
-      const firstLineEnd = inputText.indexOf("\n")
-      const firstLine = firstLineEnd === -1 ? inputText : inputText.slice(0, firstLineEnd)
-      const [command, ...firstLineArgs] = firstLine.split(" ")
-      const restOfInput = firstLineEnd === -1 ? "" : inputText.slice(firstLineEnd + 1)
-      const args = firstLineArgs.join(" ") + (restOfInput ? "\n" + restOfInput : "")
-
       void sdk.client.session.command({
         sessionID,
-        command: command.slice(1),
-        arguments: args,
+        command: slashCommand.name,
+        arguments: slashCommand.arguments,
         agent: agent.name,
         model: `${selectedModel.providerID}/${selectedModel.modelID}`,
         variant,
@@ -1348,6 +1355,7 @@ export function Prompt(props: PromptProps) {
   return (
     <>
       <box ref={(r: BoxRenderable) => (anchor = r)} visible={props.visible !== false} width="100%">
+        <CommandPreview name={commandPreview()?.name} arguments={commandPreview()?.arguments ?? ""} />
         <box
           width="100%"
           border={["left"]}

@@ -13,6 +13,7 @@ import { NamedError } from "@opencode-ai/core/util/error"
 import { Agent as AgentSvc } from "../../src/agent/agent"
 import { BackgroundJob } from "@/background/job"
 import { Command } from "../../src/command"
+import { CommandTemplate } from "@opencode-ai/core/command-template"
 import { Config } from "@/config/config"
 import { LSP } from "@/lsp/lsp"
 import { MCP } from "../../src/mcp"
@@ -109,7 +110,11 @@ function errorTool(parts: SessionV1.Part[]) {
   return part?.state.status === "error" ? (part as ErrorToolPart) : undefined
 }
 
-function makeMcp(instructions: MCP.ServerInstructions[] = []) {
+// MCP prompt templates receive their arguments as `$1`, `$2`, ... so the
+// returned text goes through the same command placeholder expansion.
+type McpPrompt = { arguments: string[]; render: (args: Record<string, string>) => string }
+
+function makeMcp(instructions: MCP.ServerInstructions[] = [], prompts: Record<string, McpPrompt> = {}) {
   return Layer.succeed(
     MCP.Service,
     MCP.Service.of({
@@ -117,13 +122,30 @@ function makeMcp(instructions: MCP.ServerInstructions[] = []) {
       clients: () => Effect.succeed({}),
       instructions: () => Effect.succeed(instructions),
       tools: () => Effect.succeed({}),
-      prompts: () => Effect.succeed({}),
+      prompts: () =>
+        Effect.succeed(
+          Object.fromEntries(
+            Object.entries(prompts).map(([name, item]) => [
+              name,
+              { name, client: "test", arguments: item.arguments.map((argument) => ({ name: argument })) },
+            ]),
+          ),
+        ),
       resources: () => Effect.succeed({}),
       resourceTemplates: () => Effect.succeed({}),
       add: () => Effect.succeed({ status: { status: "disabled" as const } }),
       connect: () => Effect.void,
       disconnect: () => Effect.void,
-      getPrompt: () => Effect.succeed(undefined),
+      getPrompt: (_client, name, args) =>
+        Effect.succeed(
+          prompts[name]
+            ? {
+                messages: [
+                  { role: "user" as const, content: { type: "text" as const, text: prompts[name].render(args ?? {}) } },
+                ],
+              }
+            : undefined,
+        ),
       readResource: () => Effect.succeed(undefined),
       startAuth: () => Effect.die("unexpected MCP auth in prompt-effect tests"),
       authenticate: () => Effect.die("unexpected MCP auth in prompt-effect tests"),
@@ -221,12 +243,16 @@ function makePrompt(input?: { mcpInstructions?: MCP.ServerInstructions[]; proces
   return LayerNode.compile(promptRoot, replacements)
 }
 
-function makeHttp(input?: { mcpInstructions?: MCP.ServerInstructions[]; processor?: "blocking" }) {
+function makeHttp(input?: {
+  mcpInstructions?: MCP.ServerInstructions[]
+  mcpPrompts?: Record<string, McpPrompt>
+  processor?: "blocking"
+}) {
   const root = LayerNode.group([promptRoot, testLLMServerNode])
   const replacements = [
     [SessionSummary.node, summary],
     [LSP.node, lsp],
-    [MCP.node, makeMcp(input?.mcpInstructions)],
+    [MCP.node, makeMcp(input?.mcpInstructions, input?.mcpPrompts)],
     [RuntimeFlags.node, runtimeFlags],
   ] as const
   if (input?.processor === "blocking") {
@@ -251,6 +277,13 @@ const withMcpInstructions = testEffect(
         tools: ["guide-server_lookup"],
       },
     ],
+  }),
+)
+const withMcpPrompts = testEffect(
+  makeHttp({
+    mcpPrompts: {
+      lookup: { arguments: ["topic", "depth"], render: (args) => `Look up ${args.topic} at depth ${args.depth}` },
+    },
   }),
 )
 const unix = process.platform !== "win32" ? it.instance : it.instance.skip
@@ -1841,6 +1874,247 @@ unix(
         expect(JSON.stringify(inputs.at(-1)?.messages)).toContain("configured")
       }),
     ),
+  30_000,
+)
+
+// Command expansion: each row is the exact text a command sends for a template
+// and an argument string, observed through the real send path.
+const expansionCases = [
+  {
+    name: "quoted",
+    template: "Compare $1 with $2",
+    arguments: `"hello world" 'x y'`,
+    sent: "Compare hello world with x y",
+  },
+  { name: "rest", template: "From $1 to $2: $3", arguments: "a b c d e", sent: "From a to b: c d e" },
+  { name: "arguments", template: "Echo: $ARGUMENTS", arguments: `"hello world" x`, sent: `Echo: "hello world" x` },
+  {
+    name: "append",
+    template: "Review the code",
+    arguments: "focus on tests",
+    sent: "Review the code\n\nfocus on tests",
+  },
+  { name: "blank", template: "Review the code", arguments: "   ", sent: "Review the code" },
+  { name: "missing", template: "Need $1 and $2", arguments: "only", sent: "Need only and" },
+  { name: "repeated", template: "$1, $1 and $2", arguments: "a b c", sent: "a, a and b c" },
+  {
+    name: "multiline",
+    template: "Do $1 then $ARGUMENTS",
+    arguments: "first\nsecond line",
+    sent: "Do first second line then first\nsecond line",
+  },
+  { name: "two-digit", template: "A $1 B $10", arguments: "a b c", sent: "A a B" },
+  { name: "image", template: "Look at $1 and $2", arguments: "[Image 1] now", sent: "Look at [Image 1] and now" },
+  { name: "trim", template: "  $ARGUMENTS  ", arguments: "x", sent: "x" },
+  { name: "unbalanced-quote", template: "A $1 B $2", arguments: `say "unterminated`, sent: "A say B unterminated" },
+  { name: "unicode", template: "Hi $1", arguments: "héllo 🌍", sent: "Hi héllo 🌍" },
+  { name: "backslash", template: "Open $1", arguments: "C:\\dir\\file.txt", sent: "Open C:\\dir\\file.txt" },
+  { name: "tab", template: "[$ARGUMENTS]", arguments: "a\tb", sent: "[a\tb]" },
+  {
+    name: "reexpanded",
+    template: "First: $1 / All: $ARGUMENTS",
+    arguments: `"x $ARGUMENTS"`,
+    sent: `First: x $ARGUMENTS / All: "x $ARGUMENTS"`,
+  },
+  { name: "replacement-pattern", template: "Echo: $ARGUMENTS", arguments: "a$&b", sent: "Echo: a$&b" },
+  { name: "zero", template: "Run $0 now", arguments: "a b", sent: "Run $0 now\n\na b" },
+]
+
+const shellExpansionCases = [
+  { name: "shell", template: "Say !`echo hi`", arguments: "", sent: "Say hi" },
+  { name: "shell-inline", template: "!`printf a` and !`printf b`", arguments: "", sent: "a and b" },
+  { name: "shell-argument", template: "Say !`printf $1`", arguments: "hello", sent: "Say hello" },
+  { name: "injected", template: "Echo: $ARGUMENTS", arguments: "!`printf pwned`", sent: "Echo: !`printf pwned`" },
+]
+
+function sentText(parts: readonly SessionV1.Part[]) {
+  const subtask = parts.find((part) => part.type === "subtask")
+  if (subtask) return subtask.prompt
+  return parts.find((part): part is SessionV1.TextPart => part.type === "text" && !part.synthetic)?.text
+}
+
+const sendCommand = Effect.fn("test.sendCommand")(function* (sessionID: SessionID, command: string, args: string) {
+  const prompt = yield* SessionPrompt.Service
+  const sessions = yield* Session.Service
+  const before = (yield* sessions.messages({ sessionID })).length
+  yield* prompt.command({ sessionID, command, arguments: args })
+  // Subtask commands add a synthetic follow-up turn, so take the first new user message.
+  const messages = yield* sessions.messages({ sessionID })
+  return messages.slice(before).find((message) => message.info.role === "user")?.parts ?? []
+})
+
+const sendCases = Effect.fn("test.sendCases")(function* (
+  cases: readonly { name: string; template: string; arguments: string }[],
+) {
+  const { llm } = yield* useServerConfig((url) => ({
+    ...providerCfg(url),
+    command: Object.fromEntries(cases.map((item) => [item.name, { template: item.template }])),
+  }))
+  const { chat } = yield* boot()
+  return yield* Effect.forEach(cases, (item) =>
+    Effect.gen(function* () {
+      yield* llm.text("done")
+      return { name: item.name, sent: sentText(yield* sendCommand(chat.id, item.name, item.arguments)) }
+    }),
+  )
+})
+
+it.instance(
+  "command expansion sends the expected text",
+  () =>
+    Effect.gen(function* () {
+      expect(yield* sendCases(expansionCases)).toEqual(
+        expansionCases.map((item) => ({ name: item.name, sent: item.sent })),
+      )
+    }),
+  30_000,
+)
+
+unix(
+  "command expansion runs shell blocks on send",
+  () =>
+    withSh(() =>
+      Effect.gen(function* () {
+        expect(yield* sendCases(shellExpansionCases)).toEqual(
+          shellExpansionCases.map((item) => ({ name: item.name, sent: item.sent })),
+        )
+      }),
+    ),
+  30_000,
+)
+
+const previewCases = Effect.fn("test.previewCases")(function* (
+  cases: readonly { name: string; arguments: string }[],
+  shell: (commands: Command.Interface) => CommandTemplate.ShellStrategy,
+) {
+  const commands = yield* Command.Service
+  return yield* Effect.forEach(cases, (item) =>
+    Effect.gen(function* () {
+      const info = yield* commands.get(item.name)
+      if (!info) throw new Error(`missing command ${item.name}`)
+      const expansion = yield* commands.expand(info, { arguments: item.arguments, shell: shell(commands) })
+      return { name: item.name, sent: expansion.text }
+    }),
+  )
+})
+
+it.instance(
+  "command preview matches the sent text character for character",
+  () =>
+    Effect.gen(function* () {
+      const sent = yield* sendCases(expansionCases)
+      expect(sent).toEqual(yield* previewCases(expansionCases, () => CommandTemplate.deferShell))
+    }),
+  30_000,
+)
+
+unix(
+  "command preview defers shell blocks unless asked to run them",
+  () =>
+    withSh(() =>
+      Effect.gen(function* () {
+        const sent = yield* sendCases(shellExpansionCases)
+        expect(sent).toEqual(yield* previewCases(shellExpansionCases, (commands) => commands.runShell))
+        expect(yield* previewCases(shellExpansionCases, () => CommandTemplate.deferShell)).toEqual([
+          { name: "shell", sent: "Say !`echo hi`" },
+          { name: "shell-inline", sent: "!`printf a` and !`printf b`" },
+          { name: "shell-argument", sent: "Say !`printf hello`" },
+          { name: "injected", sent: "Echo: !`printf pwned`" },
+        ])
+      }),
+    ),
+  30_000,
+)
+
+it.instance(
+  "init command fills worktree path and arguments",
+  () =>
+    Effect.gen(function* () {
+      const { llm, dir } = yield* useServerConfig(providerCfg)
+      const { chat } = yield* boot()
+      yield* llm.text("done")
+      const text = sentText(yield* sendCommand(chat.id, "init", "focus on tests"))
+      expect(text).toContain("focus on tests")
+      expect(text).toContain(`\`AGENTS.md\` already exists at \`${dir}\``)
+      expect(text).not.toContain("$ARGUMENTS")
+      expect(text).not.toContain("${path}")
+    }),
+  { git: true },
+  30_000,
+)
+
+it.instance(
+  "review command sends a subtask with arguments in every placeholder",
+  () =>
+    Effect.gen(function* () {
+      const { llm } = yield* useServerConfig(providerCfg)
+      const { chat } = yield* boot()
+      yield* llm.text("child done")
+      yield* llm.text("done")
+      const parts = yield* sendCommand(chat.id, "review", "HEAD~1")
+      expect(parts.find((part) => part.type === "subtask")).toBeDefined()
+      const text = sentText(parts)
+      expect(text).toContain("Input: HEAD~1")
+      expect(text).toContain("`git show HEAD~1`")
+      expect(text).toContain("`gh pr view HEAD~1`")
+      expect(text).not.toContain("$ARGUMENTS")
+    }),
+  30_000,
+)
+
+withMcpPrompts.instance(
+  "MCP prompt command fills its positional arguments",
+  () =>
+    Effect.gen(function* () {
+      const { llm } = yield* useServerConfig(providerCfg)
+      const { chat } = yield* boot()
+      yield* llm.text("done")
+      expect(sentText(yield* sendCommand(chat.id, "lookup", `"rate limits" 2`))).toBe("Look up rate limits at depth 2")
+    }),
+  30_000,
+)
+
+it.instance(
+  "skill command appends arguments after the skill body",
+  () =>
+    Effect.gen(function* () {
+      const { llm, dir } = yield* useServerConfig(providerCfg)
+      yield* writeText(
+        path.join(dir, ".opencode", "skill", "probe-skill", "SKILL.md"),
+        ["---", "name: probe-skill", "description: Probe skill.", "---", "", "Use the probe skill."].join("\n"),
+      )
+      const { chat } = yield* boot()
+      yield* llm.text("done")
+      expect(sentText(yield* sendCommand(chat.id, "probe-skill", "on auth"))).toBe(
+        [
+          "Use the probe skill.",
+          "",
+          `Base directory for this skill: ${path.join(dir, ".opencode", "skill", "probe-skill")}`,
+          "Relative paths in this skill (e.g., scripts/, references/) are relative to this base directory.",
+          "",
+          "on auth",
+        ].join("\n"),
+      )
+    }),
+  30_000,
+)
+
+it.instance(
+  "command template file references become file parts",
+  () =>
+    Effect.gen(function* () {
+      const { llm, dir } = yield* useServerConfig((url) => ({
+        ...providerCfg(url),
+        command: { summarize: { template: "Summarize @notes.md for $1" } },
+      }))
+      yield* writeText(path.join(dir, "notes.md"), "notes")
+      const { chat } = yield* boot()
+      yield* llm.text("done")
+      const parts = yield* sendCommand(chat.id, "summarize", "reviewers")
+      expect(sentText(parts)).toBe("Summarize @notes.md for reviewers")
+      expect(parts.some((part) => part.type === "file" && part.filename === "notes.md")).toBe(true)
+    }),
+  { git: true },
   30_000,
 )
 

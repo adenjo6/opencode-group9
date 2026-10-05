@@ -1,5 +1,6 @@
 import { Agent } from "@/agent/agent"
 import { Command } from "@/command"
+import { CommandTemplate } from "@opencode-ai/core/command-template"
 import * as InstanceState from "@/effect/instance-state"
 import { Format } from "@/format"
 import { Global } from "@opencode-ai/core/global"
@@ -9,7 +10,8 @@ import { Skill } from "@/skill"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
 import { InstanceHttpApi } from "../api"
-import { ApiVcsApplyError } from "../groups/instance"
+import { CommandNotFoundError } from "../errors"
+import { ApiVcsApplyError, type CommandPreviewInput } from "../groups/instance"
 import { markInstanceForDisposal } from "../lifecycle"
 
 export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance", (handlers) =>
@@ -77,6 +79,23 @@ export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance"
       return yield* command.list()
     })
 
+    const previewCommand = Effect.fn("InstanceHttpApi.commandPreview")(function* (ctx: {
+      payload: CommandPreviewInput
+    }) {
+      const info = yield* command.get(ctx.payload.command)
+      if (!info)
+        return yield* Effect.fail(
+          new CommandNotFoundError({
+            name: ctx.payload.command,
+            message: `Command not found: ${ctx.payload.command}`,
+          }),
+        )
+      return yield* command.expand(info, {
+        arguments: ctx.payload.arguments,
+        shell: ctx.payload.shell === "run" ? command.runShell : CommandTemplate.deferShell,
+      })
+    })
+
     const getAgent = Effect.fn("InstanceHttpApi.agent")(function* () {
       return yield* agent.list()
     })
@@ -102,6 +121,7 @@ export const instanceHandlers = HttpApiBuilder.group(InstanceHttpApi, "instance"
       .handle("vcsDiffRaw", getVcsDiffRaw)
       .handle("vcsApply", applyVcs)
       .handle("command", getCommand)
+      .handle("commandPreview", previewCommand)
       .handle("agent", getAgent)
       .handle("skill", getSkill)
       .handle("lsp", getLsp)
