@@ -85,7 +85,7 @@ No integration-time design change or unfinished combined-code work was identifie
 
 Added provider `tool_choice` configuration, selection between `apply_patch` and `edit`/`write`, preservation of unrelated tools, and display of the selected choice in the models command. Combined tests cover defaults, explicit overrides, API-ID lookup, and registry behavior.
 
-There were no significant changes from the previous RFC. Implementation detail wise is the same as what was proposed. Slightly modification on the expected benefits of the change as OCP was no longer appropriate to be listed
+There were no significant changes from the previous RFC. Implementation detail wise is the same as what was proposed. Slightly modification on the expected benefits of the change as OCP was no longer appropriate to be listed. We also change the test cases to cover explicitly all the edge cases suggested by AI
 
 ### Installation
 
