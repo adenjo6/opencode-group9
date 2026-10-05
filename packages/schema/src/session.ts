@@ -15,6 +15,12 @@ export type ID = SessionID
 
 export const Event = SessionEvent
 
+export const Match = Schema.Union([
+  Schema.Struct({ field: Schema.Literal("title") }),
+  Schema.Struct({ field: Schema.Literal("message"), preview: Schema.String }),
+]).annotate({ identifier: "Session.Match" })
+export type Match = typeof Match.Type
+
 export interface Info extends Schema.Schema.Type<typeof Info> {}
 export const Info = Schema.Struct({
   id: ID,

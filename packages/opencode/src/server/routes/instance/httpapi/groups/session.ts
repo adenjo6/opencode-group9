@@ -110,7 +110,7 @@ export const SessionApi = HttpApi.make("session")
       .add(
         HttpApiEndpoint.get("list", SessionPaths.list, {
           query: ListQuery,
-          success: described(Schema.Array(Session.Info), "List of sessions"),
+          success: described(Schema.Array(Session.ListInfo), "List of sessions"),
         }).annotateMerge(
           OpenApi.annotations({
             identifier: "session.list",

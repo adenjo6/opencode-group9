@@ -2246,6 +2246,7 @@ export type GlobalSession = {
     snapshot?: string
     diff?: string
   }
+  match?: SessionMatch
   project: ProjectSummary | null
 }
 
@@ -2543,6 +2544,60 @@ export type ProviderAuthError1 = {
   }
 }
 
+export type SessionListItem = {
+  id: string
+  slug: string
+  projectID: string
+  workspaceID?: string
+  directory: string
+  path?: string
+  parentID?: string
+  summary?: {
+    additions: number
+    deletions: number
+    files: number
+    diffs?: Array<SnapshotFileDiff>
+  }
+  cost?: number
+  tokens?: {
+    input: number
+    output: number
+    reasoning: number
+    cache: {
+      read: number
+      write: number
+    }
+  }
+  share?: {
+    url: string
+  }
+  title: string
+  agent?: string
+  model?: {
+    id: string
+    providerID: string
+    variant?: string
+  }
+  version: string
+  metadata?: {
+    [key: string]: unknown
+  }
+  time: {
+    created: number
+    updated: number
+    compacting?: number
+    archived?: number
+  }
+  permission?: PermissionRuleset
+  revert?: {
+    messageID: string
+    partID?: string
+    snapshot?: string
+    diff?: string
+  }
+  match?: SessionMatch
+}
+
 export type NotFoundError = {
   name: "NotFoundError"
   data: {
@@ -2685,8 +2740,36 @@ export type UnauthorizedError = {
   message: string
 }
 
+export type SessionListItem1 = {
+  id: string
+  parentID?: string
+  projectID: string
+  agent?: string
+  model?: ModelRef
+  cost: number
+  tokens: {
+    input: number
+    output: number
+    reasoning: number
+    cache: {
+      read: number
+      write: number
+    }
+  }
+  time: {
+    created: number
+    updated: number
+    archived?: number
+  }
+  title: string
+  location: LocationRef
+  subpath?: string
+  revert?: RevertState
+  match?: SessionMatch
+}
+
 export type SessionsResponse = {
-  data: Array<SessionV2Info>
+  data: Array<SessionListItem1>
   cursor: {
     previous?: string
     next?: string
@@ -3846,6 +3929,15 @@ export type ConfigV2ExperimentalPolicy = {
   effect: PolicyEffect
   resource: string
 }
+
+export type SessionMatch =
+  | {
+      field: "title"
+    }
+  | {
+      field: "message"
+      preview: string
+    }
 
 export type ProjectDirectories = Array<{
   directory: string
@@ -9468,7 +9560,7 @@ export type SessionListResponses = {
   /**
    * List of sessions
    */
-  200: Array<Session>
+  200: Array<SessionListItem>
 }
 
 export type SessionListResponse = SessionListResponses[keyof SessionListResponses]
@@ -11340,6 +11432,7 @@ export type V2SessionListData = {
     limit?: number
     order?: "asc" | "desc"
     search?: string
+    roots?: boolean | "true" | "false"
     directory?: string
     project?: string
     subpath?: string
