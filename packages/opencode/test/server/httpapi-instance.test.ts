@@ -2,6 +2,7 @@ import { PermissionV1 } from "@opencode-ai/core/v1/permission"
 import { NodeHttpServer, NodeServices } from "@effect/platform-node"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { describe, expect } from "bun:test"
+import { GlobalBus, type GlobalEvent } from "@/bus/global"
 import { Config, Context, Effect, FileSystem, Layer, Path } from "effect"
 import { HttpClient, HttpClientRequest, HttpRouter, HttpServer } from "effect/unstable/http"
 import * as Socket from "effect/unstable/socket/Socket"
@@ -260,6 +261,103 @@ describe("instance HttpApi", () => {
       expect(yield* diff.json).toContainEqual(
         expect.objectContaining({ file: "changed.txt", additions: 1, status: "added" }),
       )
+    }),
+  )
+  it.live("previews command expansion without creating a session or running shell blocks", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped({
+        git: true,
+        config: {
+          command: {
+            compare: { template: "Compare $1 with $2" },
+            touch: { template: "Made !`touch made.txt` for $ARGUMENTS" },
+          },
+        },
+      })
+      const fs = yield* FileSystem.FileSystem
+      const path = yield* Path.Path
+      const listSessions = HttpClientRequest.get(SessionPaths.list).pipe(
+        directoryHeader(dir),
+        HttpClient.execute,
+        Effect.flatMap((response) => response.json),
+      )
+      const preview = (body: Record<string, unknown>) =>
+        HttpClientRequest.post(InstancePaths.commandPreview).pipe(
+          directoryHeader(dir),
+          HttpClientRequest.bodyJson(body),
+          Effect.flatMap(HttpClient.execute),
+        )
+
+      const before = yield* listSessions
+      const events: GlobalEvent[] = []
+      const record = (event: GlobalEvent) => events.push(event)
+      GlobalBus.on("event", record)
+      yield* Effect.addFinalizer(() => Effect.sync(() => GlobalBus.off("event", record)))
+
+      const compare = yield* preview({ command: "compare", arguments: `"hello world" 'x y'` })
+      const touch = yield* preview({ command: "touch", arguments: "the test" })
+
+      expect(compare.status).toBe(200)
+      expect(yield* compare.json).toEqual({
+        text: "Compare hello world with x y",
+        arguments: [
+          { placeholder: "$1", value: "hello world" },
+          { placeholder: "$2", value: "x y" },
+        ],
+        appended: false,
+        shell: [],
+      })
+      expect(touch.status).toBe(200)
+      expect(yield* touch.json).toEqual({
+        text: "Made !`touch made.txt` for the test",
+        arguments: [{ placeholder: "$ARGUMENTS", value: "the test" }],
+        appended: false,
+        shell: [{ command: "touch made.txt", status: "pending" }],
+      })
+      expect(yield* fs.exists(path.join(dir, "made.txt"))).toBe(false)
+      expect(yield* listSessions).toEqual(before)
+      expect(
+        events
+          .map((event) => String(event.payload?.type))
+          .filter((type) => type.startsWith("session.") || type.startsWith("message.")),
+      ).toEqual([])
+    }),
+  )
+
+  const unixLive = process.platform === "win32" ? it.live.skip : it.live
+
+  unixLive("runs command preview shell blocks only when asked", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped({ git: true, config: { command: { say: { template: "Say !`printf hi`" } } } })
+      const response = yield* HttpClientRequest.post(InstancePaths.commandPreview).pipe(
+        directoryHeader(dir),
+        HttpClientRequest.bodyJson({ command: "say", arguments: "", shell: "run" }),
+        Effect.flatMap(HttpClient.execute),
+      )
+
+      expect(response.status).toBe(200)
+      expect(yield* response.json).toMatchObject({
+        text: "Say hi",
+        shell: [{ command: "printf hi", status: "ran", output: "hi" }],
+      })
+    }),
+  )
+
+  it.live("returns a typed not found body when previewing a missing command", () =>
+    Effect.gen(function* () {
+      const dir = yield* tmpdirScoped({ git: true })
+      const response = yield* HttpClientRequest.post(InstancePaths.commandPreview).pipe(
+        directoryHeader(dir),
+        HttpClientRequest.bodyJson({ command: "missing-command", arguments: "" }),
+        Effect.flatMap(HttpClient.execute),
+      )
+
+      expect(response.status).toBe(404)
+      expect(yield* response.json).toEqual({
+        _tag: "CommandNotFoundError",
+        name: "missing-command",
+        message: "Command not found: missing-command",
+      })
     }),
   )
 })

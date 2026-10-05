@@ -2350,6 +2350,30 @@ export type Command = {
   hints: Array<string>
 }
 
+export type CommandTemplateBinding = {
+  placeholder: string
+  value: string
+}
+
+export type CommandTemplateShellBlock = {
+  command: string
+  status: "pending" | "ran"
+  output?: string
+}
+
+export type CommandExpansion = {
+  text: string
+  arguments: Array<CommandTemplateBinding>
+  appended: boolean
+  shell: Array<CommandTemplateShellBlock>
+}
+
+export type CommandNotFoundError = {
+  _tag: "CommandNotFoundError"
+  name: string
+  message: string
+}
+
 export type Agent = {
   name: string
   description?: string
@@ -8313,6 +8337,42 @@ export type CommandListResponses = {
 }
 
 export type CommandListResponse = CommandListResponses[keyof CommandListResponses]
+
+export type CommandPreviewData = {
+  body?: {
+    command: string
+    arguments: string
+    shell?: "defer" | "run"
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/command/preview"
+}
+
+export type CommandPreviewErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+  /**
+   * CommandNotFoundError
+   */
+  404: CommandNotFoundError
+}
+
+export type CommandPreviewError = CommandPreviewErrors[keyof CommandPreviewErrors]
+
+export type CommandPreviewResponses = {
+  /**
+   * Expanded command
+   */
+  200: CommandExpansion
+}
+
+export type CommandPreviewResponse = CommandPreviewResponses[keyof CommandPreviewResponses]
 
 export type AppAgentsData = {
   body?: never

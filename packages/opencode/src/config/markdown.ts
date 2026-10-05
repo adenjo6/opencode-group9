@@ -1,9 +1,10 @@
 import { Filesystem } from "@/util/filesystem"
 import { FrontmatterError } from "@opencode-ai/core/v1/config/error"
 import { ConfigMarkdown as ConfigMarkdownCore } from "@opencode-ai/core/config/markdown"
+import { CommandTemplate } from "@opencode-ai/core/command-template"
 
 export const FILE_REGEX = /(?<![\w`])@(\.?[^\s`,.]*(?:\.[^\s`,.]+)*)/g
-export const SHELL_REGEX = /!`([^`]+)`/g
+export const SHELL_REGEX = CommandTemplate.SHELL_REGEX
 
 export function files(template: string) {
   return Array.from(template.matchAll(FILE_REGEX))
