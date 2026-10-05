@@ -153,9 +153,10 @@ function HomeSessionLeadingController(props: {
   record: HomeSessionRecord
   revealProjectOnHover: boolean
 }) {
+  const server = () => (props.record.server ? ServerConnection.key(props.record.server) : props.server())
   return (
     <HomeSessionStatusController
-      server={props.server}
+      server={server}
       record={props.record}
       isOpenTab={props.isOpenTab}
       render={(state) => (
@@ -357,7 +358,7 @@ function HomeSessionSearchResultRow(
       role="option"
       aria-selected={props.selected}
       class={`
-        flex h-10 w-full shrink-0 cursor-default items-center gap-2 border-0 py-3 pl-[18px] pr-6 text-left
+        flex min-h-10 w-full shrink-0 cursor-default items-center gap-2 border-0 py-2 pl-[18px] pr-6 text-left
         transition-[background-color] duration-[120ms] ease-in-out
         hover:bg-v2-overlay-simple-overlay-hover focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:outline-none
       `}
@@ -382,10 +383,15 @@ function HomeSessionSearchResultRow(
         record={props.record}
         revealProjectOnHover={!!showProjectName()}
       />
-      <div class="flex min-w-0 flex-1 items-center gap-1.5">
-        <HomeSessionTitle title={title()} showProjectName={!!showProjectName()} search />
-        <Show when={showProjectName()}>
-          <HomeSessionProjectName name={props.record.projectName} search />
+      <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+        <div class="flex min-w-0 items-center gap-1.5">
+          <HomeSessionTitle title={title()} showProjectName={!!showProjectName()} search />
+          <Show when={showProjectName()}>
+            <HomeSessionProjectName name={props.record.projectName} search />
+          </Show>
+        </div>
+        <Show when={props.record.session.match?.field === "message" ? props.record.session.match.preview : undefined}>
+          {(preview) => <div class="truncate text-12-regular text-v2-text-text-muted">{preview()}</div>}
         </Show>
       </div>
     </button>

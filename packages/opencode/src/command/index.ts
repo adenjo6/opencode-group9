@@ -10,6 +10,9 @@ import { Skill } from "../skill"
 import PROMPT_INITIALIZE from "./template/initialize.txt"
 import PROMPT_REVIEW from "./template/review.txt"
 import { LegacyEvent } from "@opencode-ai/schema/legacy-event"
+import { CommandTemplate } from "@opencode-ai/core/command-template"
+import { Shell } from "@opencode-ai/core/shell"
+import { Process } from "@/util/process"
 
 type State = {
   commands: Record<string, Info>
@@ -33,15 +36,7 @@ export const Info = Schema.Struct({
 
 export type Info = Omit<Schema.Schema.Type<typeof Info>, "template"> & { template: Promise<string> | string }
 
-export function hints(template: string) {
-  const result: string[] = []
-  const numbered = template.match(/\$\d+/g)
-  if (numbered) {
-    for (const match of [...new Set(numbered)].sort()) result.push(match)
-  }
-  if (template.includes("$ARGUMENTS")) result.push("$ARGUMENTS")
-  return result
-}
+export const hints = CommandTemplate.hints
 
 export const Default = {
   INIT: "init",
@@ -51,6 +46,13 @@ export const Default = {
 export interface Interface {
   readonly get: (name: string) => Effect.Effect<Info | undefined>
   readonly list: () => Effect.Effect<Info[]>
+  /** Fills a command's template. Shell blocks are handled by the given strategy. */
+  readonly expand: (
+    command: Info,
+    input: { arguments: string; shell: CommandTemplate.ShellStrategy },
+  ) => Effect.Effect<CommandTemplate.Expansion>
+  /** Runs shell blocks with the configured shell. */
+  readonly runShell: CommandTemplate.ShellStrategy
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Command") {}
@@ -168,7 +170,25 @@ const layer = Layer.effect(
       return Object.values(s.commands)
     })
 
-    return Service.of({ get, list })
+    const expand = Effect.fn("Command.expand")(function* (
+      command: Info,
+      input: { arguments: string; shell: CommandTemplate.ShellStrategy },
+    ) {
+      return yield* CommandTemplate.expand({
+        template: yield* Effect.promise(async () => command.template),
+        arguments: input.arguments,
+        shell: input.shell,
+      })
+    })
+
+    const runShell: CommandTemplate.ShellStrategy = (command) =>
+      Effect.gen(function* () {
+        const sh = Shell.preferred((yield* config.get()).shell)
+        const result = yield* Effect.promise(() => Process.text([command], { shell: sh, nothrow: true }))
+        return { status: "ran" as const, output: result.text }
+      })
+
+    return Service.of({ get, list, expand, runShell })
   }),
 )
 

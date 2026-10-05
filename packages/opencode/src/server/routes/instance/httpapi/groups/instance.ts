@@ -1,11 +1,13 @@
 import { Agent } from "@/agent/agent"
 import { Command } from "@/command"
+import { CommandTemplate } from "@opencode-ai/core/command-template"
 import { Format } from "@/format"
 import { LSP } from "@/lsp/lsp"
 import { Vcs } from "@/project/vcs"
 import { Skill } from "@/skill"
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
+import { CommandNotFoundError } from "../errors"
 import { Authorization } from "../middleware/authorization"
 import { InstanceContextMiddleware } from "../middleware/instance-context"
 import {
@@ -40,6 +42,17 @@ export class ApiVcsApplyError extends Schema.ErrorClass<ApiVcsApplyError>("VcsAp
   { httpApiStatus: 400 },
 ) {}
 
+// Inlined (no identifier annotation) so the SDK takes the fields as flat parameters.
+export const CommandPreviewInput = Schema.Struct({
+  command: Schema.String,
+  arguments: Schema.String,
+  shell: Schema.optional(Schema.Literals(["defer", "run"])).annotate({
+    description:
+      "How to handle !`command` blocks. `defer` (default) leaves them as written and reports them pending; `run` executes them.",
+  }),
+})
+export type CommandPreviewInput = typeof CommandPreviewInput.Type
+
 export const InstancePaths = {
   dispose: "/instance/dispose",
   path: "/path",
@@ -49,6 +62,7 @@ export const InstancePaths = {
   vcsDiffRaw: "/vcs/diff/raw",
   vcsApply: "/vcs/apply",
   command: "/command",
+  commandPreview: "/command/preview",
   agent: "/agent",
   skill: "/skill",
   lsp: "/lsp",
@@ -144,6 +158,19 @@ export const InstanceApi = HttpApi.make("instance")
             identifier: "command.list",
             summary: "List commands",
             description: "Get a list of all available commands in the OpenCode system.",
+          }),
+        ),
+        HttpApiEndpoint.post("commandPreview", InstancePaths.commandPreview, {
+          query: WorkspaceRoutingQuery,
+          payload: CommandPreviewInput,
+          success: described(CommandTemplate.Expansion, "Expanded command"),
+          error: CommandNotFoundError,
+        }).annotateMerge(
+          OpenApi.annotations({
+            identifier: "command.preview",
+            summary: "Preview command",
+            description:
+              "Expand a command template with the given arguments without creating a session. Shell blocks are not run unless requested.",
           }),
         ),
         HttpApiEndpoint.get("agent", InstancePaths.agent, {

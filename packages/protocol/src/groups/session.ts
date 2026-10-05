@@ -5,7 +5,7 @@ import { Session } from "@opencode-ai/schema/session"
 import { Project } from "@opencode-ai/schema/project"
 import { AbsolutePath, NonNegativeInt, PositiveInt, RelativePath, statics } from "@opencode-ai/schema/schema"
 import { Workspace } from "@opencode-ai/schema/workspace"
-import { Context, Effect, Encoding, Result, Schema, Struct } from "effect"
+import { Context, Effect, Encoding, Result, Schema, SchemaGetter, Struct } from "effect"
 import { HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
 import {
   ConflictError,
@@ -22,6 +22,13 @@ import { Location } from "@opencode-ai/schema/location"
 import { Revert } from "@opencode-ai/schema/revert"
 import { SessionEvent } from "@opencode-ai/schema/session-event"
 
+const QueryBoolean = Schema.Literals(["true", "false"]).pipe(
+  Schema.decodeTo(Schema.Boolean, {
+    decode: SchemaGetter.transform((value) => value === "true"),
+    encode: SchemaGetter.transform((value) => (value ? "true" : "false")),
+  }),
+)
+
 const SessionsQueryFields = {
   workspace: Workspace.ID.pipe(Schema.optional),
   limit: Schema.NumberFromString.pipe(Schema.decodeTo(PositiveInt), Schema.optional).annotate({
@@ -31,6 +38,7 @@ const SessionsQueryFields = {
     description: "Session order for the first page. Use desc for newest first or asc for oldest first.",
   }),
   search: Schema.optional(Schema.String),
+  roots: QueryBoolean.pipe(Schema.optional),
 }
 
 const SessionsDirectoryQuery = Schema.Struct({
@@ -80,6 +88,12 @@ export const SessionsCursor = Schema.String.pipe(
 )
 export type SessionsCursor = typeof SessionsCursor.Type
 
+export const SessionListItem = Schema.Struct({
+  ...Session.Info.fields,
+  match: Session.Match.pipe(Schema.optional),
+}).annotate({ identifier: "SessionListItem" })
+export type SessionListItem = typeof SessionListItem.Type
+
 const SessionActive = Schema.Struct({
   type: Schema.Literal("running"),
 }).annotate({ identifier: "SessionActive" })
@@ -109,7 +123,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S>(sessionLo
       HttpApiEndpoint.get("session.list", "/api/session", {
         query: SessionsQuery,
         success: Schema.Struct({
-          data: Schema.Array(Session.Info),
+          data: Schema.Array(SessionListItem),
           cursor: Schema.Struct({
             previous: SessionsCursor.pipe(Schema.optional),
             next: SessionsCursor.pipe(Schema.optional),

@@ -7,6 +7,9 @@ import { Session as SessionNs } from "@/session/session"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { provideInstance, TestInstance, tmpdirScoped } from "../fixture/fixture"
 import { testEffect } from "../lib/effect"
+import { MessageID, PartID } from "@/session/schema"
+import { ModelV2 } from "@opencode-ai/core/model"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 
 const it = testEffect(
   LayerNode.compile(LayerNode.group([SessionNs.node, SessionProjector.node, Project.node, CrossSpawnSpawner.node])),
@@ -18,6 +21,38 @@ const withSession = (input?: Parameters<SessionNs.Interface["create"]>[0]) =>
   )
 
 describe("session.listGlobal", () => {
+  it.instance(
+    "finds sessions by message text across projects",
+    () =>
+      Effect.gen(function* () {
+        const created = yield* withSession({ title: "unrelated-global-title" })
+        const session = yield* SessionNs.Service
+        const message = yield* session.updateMessage({
+          id: MessageID.ascending(),
+          role: "user",
+          sessionID: created.id,
+          agent: "build",
+          model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+          time: { created: Date.now() },
+        })
+        yield* session.updatePart({
+          id: PartID.ascending(),
+          sessionID: created.id,
+          messageID: message.id,
+          type: "text",
+          text: "global message search phrase",
+        })
+
+        expect(yield* session.listGlobal({ search: "message search", limit: 200 })).toContainEqual(
+          expect.objectContaining({
+            id: created.id,
+            match: { field: "message", preview: "global message search phrase" },
+          }),
+        )
+      }),
+    { git: true },
+  )
+
   it.instance(
     "lists sessions across projects with project metadata",
     () =>

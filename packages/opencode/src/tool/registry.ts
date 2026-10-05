@@ -29,6 +29,7 @@ import { WebSearchTool } from "./websearch"
 import { LspTool } from "./lsp"
 import * as Truncate from "./truncate"
 import { ApplyPatchTool } from "./apply_patch"
+import { ToolSelection } from "./selection"
 import { Glob } from "@opencode-ai/core/util/glob"
 import path from "path"
 import { pathToFileURL } from "url"
@@ -289,18 +290,15 @@ const layer = Layer.effect(
     })
 
     const tools: Interface["tools"] = Effect.fn("ToolRegistry.tools")(function* (input) {
-      const filtered = (yield* all()).filter((tool) => {
-        if (tool.id === WebSearchTool.id) {
-          return webSearchEnabled(input.providerID, { exa: flags.enableExa, parallel: flags.enableParallel })
-        }
-
-        const usePatch =
-          input.modelID.includes("gpt-") && !input.modelID.includes("oss") && !input.modelID.includes("gpt-4")
-        if (tool.id === ApplyPatchTool.id) return usePatch
-        if (tool.id === EditTool.id || tool.id === WriteTool.id) return !usePatch
-
-        return true
-      })
+      const models = (yield* config.get()).provider?.[input.providerID]?.models
+      const filtered = ToolSelection.selectTools(yield* all(), {
+        providerID: input.providerID,
+        modelID: input.modelID,
+        flags: { exa: flags.enableExa, parallel: flags.enableParallel },
+        tool_choice:
+          models?.[input.modelID]?.tool_choice ??
+          Object.values(models ?? {}).find((model) => model.id === input.modelID)?.tool_choice,
+      }).tools
 
       const codeModeDescription = filtered.some((tool) => tool.id === "execute")
         ? yield* describeCodeMode(input)

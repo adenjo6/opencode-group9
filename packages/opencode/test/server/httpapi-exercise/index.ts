@@ -140,6 +140,21 @@ const scenarios: Scenario[] = [
     .at((ctx) => ({ path: "/vcs/apply", headers: ctx.headers(), body: { patch: "" } }))
     .status(400, undefined, "status"),
   http.protected.get("/command", "command.list").json(200, array, "status"),
+  http.protected
+    .post("/command/preview", "command.preview")
+    .at((ctx) => ({
+      path: "/command/preview",
+      headers: ctx.headers(),
+      body: { command: "init", arguments: "focus on tests" },
+    }))
+    .json(
+      200,
+      (body) => {
+        object(body)
+        check(typeof body.text === "string" && body.text.includes("focus on tests"), "preview should fill arguments")
+      },
+      "status",
+    ),
   http.protected.get("/agent", "app.agents").json(200, array, "status"),
   http.protected.get("/skill", "app.skills").json(200, array, "status"),
   http.protected.get("/lsp", "lsp.status").json(200, array),

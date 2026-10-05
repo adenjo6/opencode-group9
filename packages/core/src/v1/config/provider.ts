@@ -19,6 +19,10 @@ export const Model = Schema.Struct({
   reasoning: Schema.optional(Schema.Boolean),
   temperature: Schema.optional(Schema.Boolean),
   tool_call: Schema.optional(Schema.Boolean),
+  tool_choice: Schema.optional(Schema.Literals(["apply_patch", "edit_write"])).annotate({
+    description:
+      "Edit tools to attach for this model. apply_patch and edit_write are mutually exclusive. Omit to use the model default.",
+  }),
   interleaved: Schema.optional(
     Schema.Union([
       Schema.Boolean,

@@ -1,9 +1,10 @@
 export * as SessionV2 from "./session"
 export * from "./session/schema"
+export { SessionSearch } from "./session/search"
 
 import { DateTime, Effect, Layer, Schema, Context, Stream } from "effect"
 import { ListAnchor } from "@opencode-ai/schema/session"
-import { and, asc, desc, eq, gt, like, lt, or, type SQL } from "drizzle-orm"
+import { and, asc, desc, eq, gt, isNull, lt, or, type SQL } from "drizzle-orm"
 import { ProjectV2 } from "./project"
 import { WorkspaceV2 } from "./workspace"
 import { ModelV2 } from "./model"
@@ -37,6 +38,7 @@ import { SessionRevert } from "./session/revert"
 import { Revert } from "@opencode-ai/schema/revert"
 import { FSUtil } from "./fs-util"
 import { SessionDurable } from "@opencode-ai/schema/durable-event-manifest"
+import { SessionSearch } from "./session/search"
 
 export const RevertState = Revert.State
 export type RevertState = Revert.State
@@ -55,6 +57,7 @@ export { ListAnchor }
 const ListInputBase = {
   workspaceID: WorkspaceV2.ID.pipe(Schema.optional),
   search: Schema.String.pipe(Schema.optional),
+  roots: Schema.Boolean.pipe(Schema.optional),
   limit: PositiveInt.pipe(Schema.optional),
   order: Schema.Literals(["asc", "desc"]).pipe(Schema.optional),
   anchor: ListAnchor.pipe(Schema.optional),
@@ -111,7 +114,7 @@ export type MessageNotFoundError = SessionRevert.MessageNotFoundError
 export type Error = NotFoundError | MessageDecodeError | OperationUnavailableError | PromptConflictError
 
 export interface Interface {
-  readonly list: (input?: ListInput) => Effect.Effect<SessionSchema.Info[]>
+  readonly list: (input?: ListInput) => Effect.Effect<SessionSearch.Result<SessionSchema.Info>[]>
   readonly create: (input: CreateInput) => Effect.Effect<SessionSchema.Info>
   readonly get: (sessionID: SessionSchema.ID) => Effect.Effect<SessionSchema.Info, NotFoundError>
   readonly messages: (input: {
@@ -274,7 +277,7 @@ const layer = Layer.effect(
         if ("directory" in input) conditions.push(eq(SessionTable.directory, input.directory))
         if (input.workspaceID) conditions.push(eq(SessionTable.workspace_id, input.workspaceID))
         if ("project" in input) conditions.push(eq(SessionTable.project_id, input.project))
-        if (input.search) conditions.push(like(SessionTable.title, `%${input.search}%`))
+        if (input.roots) conditions.push(isNull(SessionTable.parent_id))
         if (input.anchor) {
           conditions.push(
             order === "asc"
@@ -288,18 +291,19 @@ const layer = Layer.effect(
                 )!,
           )
         }
-        const query = db
-          .select()
-          .from(SessionTable)
-          .where(conditions.length > 0 ? and(...conditions) : undefined)
-          .orderBy(
+        const rows = yield* SessionSearch.list(db, {
+          conditions,
+          search: input.search,
+          limit: input.limit,
+          orderBy: [
             order === "asc" ? asc(sortColumn) : desc(sortColumn),
             order === "asc" ? asc(SessionTable.id) : desc(SessionTable.id),
-          )
-        const rows = yield* (input.limit === undefined ? query.all() : query.limit(input.limit).all()).pipe(
-          Effect.orDie,
-        )
-        return (direction === "previous" ? rows.toReversed() : rows).map((row) => fromRow(row))
+          ],
+        })
+        return (direction === "previous" ? rows.toReversed() : rows).map((row) => ({
+          ...fromRow(row.row),
+          ...(row.match ? { match: row.match } : {}),
+        }))
       }),
       messages: Effect.fn("V2Session.messages")(function* (input) {
         yield* result.get(input.sessionID)

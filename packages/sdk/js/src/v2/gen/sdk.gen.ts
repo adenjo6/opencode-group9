@@ -17,6 +17,8 @@ import type {
   AuthSetResponses,
   CommandListErrors,
   CommandListResponses,
+  CommandPreviewErrors,
+  CommandPreviewResponses,
   Config as Config3,
   ConfigGetErrors,
   ConfigGetResponses,
@@ -2184,6 +2186,47 @@ export class Command extends HeyApiClient {
       url: "/command",
       ...options,
       ...params,
+    })
+  }
+
+  /**
+   * Preview command
+   *
+   * Expand a command template with the given arguments without creating a session. Shell blocks are not run unless requested.
+   */
+  public preview<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      command?: string
+      arguments?: string
+      shell?: "defer" | "run"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "command" },
+            { in: "body", key: "arguments" },
+            { in: "body", key: "shell" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<CommandPreviewResponses, CommandPreviewErrors, ThrowOnError>({
+      url: "/command/preview",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 }
@@ -5435,6 +5478,7 @@ export class Session3 extends HeyApiClient {
       limit?: number
       order?: "asc" | "desc"
       search?: string
+      roots?: boolean | "true" | "false"
       directory?: string
       project?: string
       subpath?: string
@@ -5451,6 +5495,7 @@ export class Session3 extends HeyApiClient {
             { in: "query", key: "limit" },
             { in: "query", key: "order" },
             { in: "query", key: "search" },
+            { in: "query", key: "roots" },
             { in: "query", key: "directory" },
             { in: "query", key: "project" },
             { in: "query", key: "subpath" },

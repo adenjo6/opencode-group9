@@ -1,5 +1,5 @@
 import { afterEach, describe, expect } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { AppNodeBuilder } from "@opencode-ai/core/effect/app-node-builder"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
 import { Database } from "@opencode-ai/core/database/database"
@@ -12,6 +12,9 @@ import { SessionTable } from "@opencode-ai/core/session/sql"
 import { eq } from "drizzle-orm"
 import { testEffect } from "../lib/effect"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { MessageID, PartID } from "@/session/schema"
+import { ModelV2 } from "@opencode-ai/core/model"
+import { ProviderV2 } from "@opencode-ai/core/provider"
 
 const layer = (experimentalWorkspaces: boolean) =>
   AppNodeBuilder.build(LayerNode.group([Database.node, SessionNs.node, SessionProjector.node]), [
@@ -24,6 +27,26 @@ const withSession = (input?: Parameters<SessionNs.Interface["create"]>[0]) =>
   Effect.acquireRelease(SessionNs.use.create(input), (created) =>
     SessionNs.Service.use((session) => session.remove(created.id).pipe(Effect.ignore)),
   )
+
+const withText = (sessionID: SessionNs.Info["id"], text: string, created: number) =>
+  Effect.gen(function* () {
+    const session = yield* SessionNs.Service
+    const message = yield* session.updateMessage({
+      id: MessageID.ascending(),
+      role: "user",
+      sessionID,
+      agent: "build",
+      model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("test") },
+      time: { created },
+    })
+    return yield* session.updatePart({
+      id: PartID.ascending(),
+      sessionID,
+      messageID: message.id,
+      type: "text",
+      text,
+    })
+  })
 
 afterEach(async () => {
   await disposeAllInstances()
@@ -266,6 +289,41 @@ describe("session.list", () => {
 
         expect(titles).toContain("unique-search-term-abc")
         expect(titles).not.toContain("other-session-xyz")
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "searches message text once per session and remains compatible with the old session schema",
+    () =>
+      Effect.gen(function* () {
+        const created = yield* withSession({ title: "unrelated-title" })
+        yield* withText(created.id, "older rate limiter discussion", 1)
+        yield* withText(created.id, "newer RATE LIMITER conclusion", 2)
+
+        const sessions = yield* SessionNs.use.list({ search: "rate limiter" })
+
+        expect(sessions).toEqual([
+          expect.objectContaining({
+            id: created.id,
+            match: { field: "message", preview: "newer RATE LIMITER conclusion" },
+          }),
+        ])
+        const wire = JSON.parse(JSON.stringify(sessions))
+        expect(Schema.decodeUnknownSync(Schema.Array(SessionNs.Info))(wire).map((item) => item.id)).toEqual([
+          created.id,
+        ])
+      }),
+    { git: true },
+  )
+
+  it.instance(
+    "treats whitespace-only search as an unfiltered list",
+    () =>
+      Effect.gen(function* () {
+        const created = yield* withSession({ title: "ordinary-session" })
+
+        expect((yield* SessionNs.use.list({ search: "   " })).map((session) => session.id)).toContain(created.id)
       }),
     { git: true },
   )

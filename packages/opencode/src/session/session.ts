@@ -11,6 +11,7 @@ import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Database } from "@opencode-ai/core/database/database"
 import { EventV2Bridge } from "@/event-v2-bridge"
 import { SessionV2 } from "@opencode-ai/core/session"
+import { SessionSearch } from "@opencode-ai/core/session"
 import * as SessionExecutionLocal from "@opencode-ai/core/session/execution/local"
 import { locationServiceMapLayer } from "@opencode-ai/core/location-services"
 
@@ -244,6 +245,12 @@ export const Info = Schema.Struct({
 }).annotate({ identifier: "Session" })
 export type Info = Types.DeepMutable<Schema.Schema.Type<typeof Info>>
 
+export const ListInfo = Schema.Struct({
+  ...Info.fields,
+  match: optional(SessionSearch.Match),
+}).annotate({ identifier: "SessionListItem" })
+export type ListInfo = Types.DeepMutable<Schema.Schema.Type<typeof ListInfo>>
+
 export const ProjectInfo = Schema.Struct({
   id: ProjectV2.ID,
   name: optional(Schema.String),
@@ -252,7 +259,7 @@ export const ProjectInfo = Schema.Struct({
 export type ProjectInfo = Types.DeepMutable<Schema.Schema.Type<typeof ProjectInfo>>
 
 export const GlobalInfo = Schema.Struct({
-  ...Info.fields,
+  ...ListInfo.fields,
   project: Schema.NullOr(ProjectInfo),
 }).annotate({ identifier: "GlobalSession" })
 export type GlobalInfo = Types.DeepMutable<Schema.Schema.Type<typeof GlobalInfo>>
@@ -411,7 +418,7 @@ export class BusyError extends Schema.TaggedErrorClass<BusyError>()("SessionBusy
 export type NotFound = NotFoundError
 
 export interface Interface {
-  readonly list: (input?: ListInput) => Effect.Effect<Info[]>
+  readonly list: (input?: ListInput) => Effect.Effect<ListInfo[]>
   readonly listGlobal: (input?: GlobalListInput) => Effect.Effect<GlobalInfo[]>
   readonly create: (input?: {
     parentID?: SessionID
@@ -558,22 +565,15 @@ const layer: Layer.Layer<
       if (input?.roots) conditions.push(isNull(SessionTable.parent_id))
       if (input?.start) conditions.push(gte(SessionTable.time_updated, input.start))
       if (input?.cursor) conditions.push(lt(SessionTable.time_updated, input.cursor))
-      if (input?.search) conditions.push(like(SessionTable.title, `%${input.search}%`))
       if (!input?.archived) conditions.push(isNull(SessionTable.time_archived))
 
-      const query =
-        conditions.length > 0
-          ? db
-              .select()
-              .from(SessionTable)
-              .where(and(...conditions))
-          : db.select().from(SessionTable)
-      const rows = yield* query
-        .orderBy(desc(SessionTable.time_updated), desc(SessionTable.id))
-        .limit(input?.limit ?? 100)
-        .all()
-        .pipe(Effect.orDie)
-      const ids = [...new Set(rows.map((row) => row.project_id))]
+      const rows = yield* SessionSearch.list(db, {
+        conditions,
+        search: input?.search,
+        limit: input?.limit ?? 100,
+        orderBy: [desc(SessionTable.time_updated), desc(SessionTable.id)],
+      })
+      const ids = [...new Set(rows.map((row) => row.row.project_id))]
       const projects = new Map<string, ProjectInfo>()
       if (ids.length > 0) {
         const items = yield* db
@@ -590,7 +590,11 @@ const layer: Layer.Layer<
           })
         }
       }
-      return rows.map((row) => ({ ...fromRow(row), project: projects.get(row.project_id) ?? null }))
+      return rows.map((row) => ({
+        ...fromRow(row.row),
+        ...(row.match ? { match: row.match } : {}),
+        project: projects.get(row.row.project_id) ?? null,
+      }))
     })
 
     const children = Effect.fn("Session.children")(function* (parentID: SessionID) {
@@ -988,23 +992,19 @@ function listByProject(
   if (input.start) {
     conditions.push(gte(SessionTable.time_updated, input.start))
   }
-  if (input.search) {
-    conditions.push(like(SessionTable.title, `%${input.search}%`))
-  }
-
-  const limit = input.limit ?? 100
-
-  return db
-    .select()
-    .from(SessionTable)
-    .where(and(...conditions))
-    .orderBy(desc(SessionTable.time_updated))
-    .limit(limit)
-    .all()
-    .pipe(
-      Effect.orDie,
-      Effect.map((rows) => rows.map(fromRow)),
-    )
+  return SessionSearch.list(db, {
+    conditions,
+    search: input.search,
+    limit: input.limit ?? 100,
+    orderBy: [desc(SessionTable.time_updated)],
+  }).pipe(
+    Effect.map((rows) =>
+      rows.map((row) => ({
+        ...fromRow(row.row),
+        ...(row.match ? { match: row.match } : {}),
+      })),
+    ),
+  )
 }
 
 export const node = LayerNode.make({

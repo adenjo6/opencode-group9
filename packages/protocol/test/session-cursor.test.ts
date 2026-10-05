@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Schema } from "effect"
-import { SessionHistoryQuery, SessionsCursor } from "../src/groups/session"
+import { SessionHistoryQuery, SessionsCursor, SessionsQuery } from "../src/groups/session"
 import { Session } from "@opencode-ai/schema/session"
 
 describe("SessionsCursor", () => {
@@ -8,6 +8,7 @@ describe("SessionsCursor", () => {
     const input = {
       workspace: undefined,
       search: "protocol",
+      roots: true,
       order: "desc" as const,
       anchor: { id: Session.ID.make("ses_test"), time: 1, direction: "next" as const },
     }
@@ -22,5 +23,13 @@ describe("SessionHistoryQuery", () => {
     const query = await Effect.runPromise(Schema.decodeUnknownEffect(SessionHistoryQuery)({ after: "3", limit: "10" }))
 
     expect(query).toEqual({ after: 3, limit: 10 })
+  })
+})
+
+describe("SessionsQuery", () => {
+  test("decodes root scope from query strings", async () => {
+    const query = await Effect.runPromise(Schema.decodeUnknownEffect(SessionsQuery)({ roots: "true" }))
+
+    expect(query.roots).toBe(true)
   })
 })
