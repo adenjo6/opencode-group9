@@ -38,6 +38,7 @@ type Endpoint3_0Input = {
   readonly limit?: Endpoint3_0Request["query"]["limit"]
   readonly order?: Endpoint3_0Request["query"]["order"]
   readonly search?: Endpoint3_0Request["query"]["search"]
+  readonly roots?: Endpoint3_0Request["query"]["roots"]
   readonly directory?: Endpoint3_0Request["query"]["directory"]
   readonly project?: Endpoint3_0Request["query"]["project"]
   readonly subpath?: Endpoint3_0Request["query"]["subpath"]
@@ -50,6 +51,7 @@ const Endpoint3_0 = (raw: RawClient["server.session"]) => (input?: Endpoint3_0In
       limit: input?.["limit"],
       order: input?.["order"],
       search: input?.["search"],
+      roots: input?.["roots"],
       directory: input?.["directory"],
       project: input?.["project"],
       subpath: input?.["subpath"],

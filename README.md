@@ -43,6 +43,50 @@
 
 ---
 
+## CMU 17-695 G2 combined version
+
+This branch combines the team's session message search, slash-command preview, and configurable edit-tool selection changes.
+
+### Run it
+
+```bash
+bun install
+bun run dev
+```
+
+`bun run dev -- --help` is a quick startup check that does not require configuring a model provider. In the TUI, open the session picker and search for text from an existing user or assistant message to check session message search. Enter a slash command to check command preview. Run `bun run dev -- models` to inspect model tool-choice information.
+
+### Checks run on the combined version
+
+- `bun typecheck` passed in `packages/schema`, `packages/core`, `packages/protocol`, `packages/server`, `packages/client`, `packages/sdk/js`, `packages/opencode`, `packages/tui`, and `packages/app`.
+- Focused Core, OpenCode, TUI, Protocol, and App suites passed: 197 tests passed, one intentionally disabled V2-projector test was skipped, and no tests failed.
+- The focused suites covered session search and list routes, command-template expansion and preview routes, tool selection, prompt execution, TUI behavior, Protocol query decoding, and multi-server App search.
+- `bun run generate` in `packages/client` and `./packages/sdk/js/script/build.ts` regenerated both clients from the combined API definitions.
+- `bun run dev -- --help` exited successfully, and `git diff --check` passed.
+- The OpenCode integration suites initially could not bind ephemeral localhost ports inside a restricted test sandbox. Running the same suites with localhost listener access produced 136 passes, one intentional skip, and no failures.
+
+### Student changes
+
+#### @bvarshan — session message search
+
+Added shared Core search across legacy and V2 message storage, additive title/message match metadata, matching legacy and V2 API behavior, TUI message previews, and debounced multi-server App search. Tests cover both storage formats, excluded auxiliary content, literal and case-insensitive matching, title priority, newest-message preview, filtering before the 150-session limit, root scope, API compatibility, and multi-server identity.
+
+The implementation moved the shared `Match` schema into the Schema package to preserve dependency direction, added a V2 `roots` query parameter for the App's existing list scope, returns the full matching message for UI presentation, and uses a correlated scalar subquery with `UNION ALL` rather than a separate `EXISTS` query. The original design remains otherwise intact.
+
+Remaining validation work is an explicit equal-timestamp tie-break test, a query-plan assertion for the no-search path, a recorded performance benchmark, a controller-level debounce/stale-response integration test, and a UI test for clearing search. These gaps do not disable the implemented search behavior, but they limit the evidence for performance and those edge cases.
+
+#### @thdxg — slash-command preview
+
+Added a shared command-template expansion module, a session-free command-preview API, generated SDK support, and live TUI preview of slash-command expansion. Combined tests cover argument parsing and substitution, deferred and executed shell blocks, prompt parity, the HTTP API, and TUI command parsing.
+
+No integration-time design change or unfinished combined-code work was identified. The author's revised RFC remains the authority for any individual design changes not represented in this repository.
+
+#### @RegMCS — configurable edit-tool selection
+
+Added provider `tool_choice` configuration, selection between `apply_patch` and `edit`/`write`, preservation of unrelated tools, and display of the selected choice in the models command. Combined tests cover defaults, explicit overrides, API-ID lookup, and registry behavior.
+
+Integration required regenerating the combined SDK so its provider type retained `tool_choice`. No other integration-time design change or unfinished combined-code work was identified. The author's revised RFC remains the authority for any individual design changes not represented in this repository.
+
 ### Installation
 
 ```bash

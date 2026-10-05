@@ -20,8 +20,9 @@ import { Prompt } from "@opencode-ai/core/session/prompt"
 import { SessionProjector } from "@opencode-ai/core/session/projector"
 import { SessionExecution } from "@opencode-ai/core/session/execution"
 import { SessionInput } from "@opencode-ai/core/session/input"
+import { SessionMessage } from "@opencode-ai/core/session/message"
 import { SessionEvent } from "@opencode-ai/core/session/event"
-import { SessionTable } from "@opencode-ai/core/session/sql"
+import { MessageTable, PartTable, SessionMessageTable, SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionStore } from "@opencode-ai/core/session/store"
 import { WorkspaceV2 } from "@opencode-ai/core/workspace"
 import { testEffect } from "./lib/effect"
@@ -420,6 +421,195 @@ describe("SessionV2.create", () => {
             Effect.map((error) => error._tag),
           ),
       ).toBe("Session.NotFoundError")
+    }),
+  )
+})
+
+describe("SessionV2.list search", () => {
+  it.effect("finds promoted V2 user messages and returns a preview", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionV2.Service
+      const events = yield* EventV2.Service
+      const db = (yield* Database.Service).db
+      const created = yield* session.create({ location })
+      yield* session.prompt({
+        sessionID: created.id,
+        prompt: Prompt.make({ text: "Discuss the Rate_Limiter at 95% capacity" }),
+        resume: false,
+      })
+      yield* SessionInput.promoteSteers(db, events, created.id, Number.MAX_SAFE_INTEGER)
+
+      expect(yield* session.list({ search: "rate_limiter at 95%" })).toEqual([
+        expect.objectContaining({
+          id: created.id,
+          match: { field: "message", preview: "Discuss the Rate_Limiter at 95% capacity" },
+        }),
+      ])
+    }),
+  )
+
+  it.effect("searches legacy text parts and ignores auxiliary content", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionV2.Service
+      const db = (yield* Database.Service).db
+      const created = yield* session.create({ location })
+      const messageID = SessionV1.MessageID.ascending()
+      yield* db
+        .insert(MessageTable)
+        .values({
+          id: messageID,
+          session_id: created.id,
+          time_created: 1,
+          data: {
+            role: "user",
+            time: { created: 1 },
+            agent: "build",
+            model: { providerID: "test", modelID: "test" },
+          } as typeof MessageTable.$inferInsert.data,
+        })
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .insert(PartTable)
+        .values([
+          {
+            id: SessionV1.PartID.ascending(),
+            message_id: messageID,
+            session_id: created.id,
+            time_created: 1,
+            data: { type: "text", text: "legacy visible phrase" } as typeof PartTable.$inferInsert.data,
+          },
+          {
+            id: SessionV1.PartID.ascending(),
+            message_id: messageID,
+            session_id: created.id,
+            time_created: 2,
+            data: {
+              type: "reasoning",
+              text: "private reasoning phrase",
+              time: { start: 2 },
+            } as typeof PartTable.$inferInsert.data,
+          },
+          {
+            id: SessionV1.PartID.ascending(),
+            message_id: messageID,
+            session_id: created.id,
+            time_created: 3,
+            data: {
+              type: "text",
+              text: "synthetic phrase",
+              synthetic: true,
+            } as typeof PartTable.$inferInsert.data,
+          },
+        ])
+        .run()
+        .pipe(Effect.orDie)
+
+      expect(yield* session.list({ search: "LEGACY VISIBLE" })).toEqual([
+        expect.objectContaining({
+          id: created.id,
+          match: { field: "message", preview: "legacy visible phrase" },
+        }),
+      ])
+      expect(yield* session.list({ search: "private reasoning" })).toEqual([])
+      expect(yield* session.list({ search: "synthetic phrase" })).toEqual([])
+    }),
+  )
+
+  it.effect("prioritizes title matches and selects the newest matching V2 message", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionV2.Service
+      const db = (yield* Database.Service).db
+      const created = yield* session.create({ location })
+      yield* db
+        .insert(SessionMessageTable)
+        .values([
+          {
+            id: SessionMessage.ID.make("msg_search_old"),
+            session_id: created.id,
+            type: "assistant",
+            seq: 1,
+            time_created: 1,
+            data: {
+              agent: "build",
+              model: { id: "model", providerID: "provider" },
+              content: [{ type: "text", id: "text_old", text: "needle in the old answer" }],
+              time: { created: 1 },
+            } as typeof SessionMessageTable.$inferInsert.data,
+          },
+          {
+            id: SessionMessage.ID.make("msg_search_new"),
+            session_id: created.id,
+            type: "user",
+            seq: 2,
+            time_created: 2,
+            data: {
+              text: "needle in the newest prompt",
+              files: [],
+              agents: [],
+              time: { created: 2 },
+            } as typeof SessionMessageTable.$inferInsert.data,
+          },
+        ])
+        .run()
+        .pipe(Effect.orDie)
+
+      expect(yield* session.list({ search: "needle" })).toEqual([
+        expect.objectContaining({
+          id: created.id,
+          match: { field: "message", preview: "needle in the newest prompt" },
+        }),
+      ])
+
+      yield* db.update(SessionTable).set({ title: "Needle title" }).where(eq(SessionTable.id, created.id)).run()
+      expect(yield* session.list({ search: "needle" })).toEqual([
+        expect.objectContaining({ id: created.id, match: { field: "title" } }),
+      ])
+    }),
+  )
+
+  it.effect("applies message search before the result limit", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionV2.Service
+      const events = yield* EventV2.Service
+      const db = (yield* Database.Service).db
+      const oldest = yield* session.create({ location })
+      yield* session.prompt({
+        sessionID: oldest.id,
+        prompt: Prompt.make({ text: "oldest-only-search-hit" }),
+        resume: false,
+      })
+      yield* SessionInput.promoteSteers(db, events, oldest.id, Number.MAX_SAFE_INTEGER)
+      yield* Effect.forEach(Array.from({ length: 149 }), () => session.create({ location }))
+
+      expect(yield* session.list({ search: "oldest-only-search-hit", limit: 30 })).toEqual([
+        expect.objectContaining({ id: oldest.id }),
+      ])
+    }),
+  )
+
+  it.effect("applies root scope before the result limit", () =>
+    Effect.gen(function* () {
+      const session = yield* SessionV2.Service
+      const db = (yield* Database.Service).db
+      const root = yield* session.create({ location })
+      const child = yield* session.create({ location })
+      yield* db
+        .update(SessionTable)
+        .set({ title: "root-filter root", time_created: 1 })
+        .where(eq(SessionTable.id, root.id))
+        .run()
+        .pipe(Effect.orDie)
+      yield* db
+        .update(SessionTable)
+        .set({ title: "root-filter child", parent_id: root.id, time_created: 2 })
+        .where(eq(SessionTable.id, child.id))
+        .run()
+        .pipe(Effect.orDie)
+
+      expect(yield* session.list({ search: "root-filter", roots: true, limit: 1 })).toEqual([
+        expect.objectContaining({ id: root.id }),
+      ])
     }),
   )
 })

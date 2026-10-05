@@ -331,6 +331,19 @@ describe("session HttpApi", () => {
         expect(listed.map((item) => item.id)).toContain(parent.id)
         expect(Object.hasOwn(listed[0]!, "parentID")).toBe(false)
 
+        const legacySearch = yield* requestJson<Session.ListInfo[]>(`${SessionPaths.list}?roots=true&search=hello`, {
+          headers,
+        })
+        const v2Search = yield* requestJson<{
+          data: Array<{ id: string; match?: { field: string; preview?: string } }>
+        }>(`/api/session?${new URLSearchParams({ directory: test.directory, search: "hello", roots: "true" })}`, {
+          headers,
+        })
+        expect(legacySearch.map((item) => String(item.id))).toEqual(v2Search.data.map((item) => item.id))
+        expect(legacySearch).toContainEqual(
+          expect.objectContaining({ id: parent.id, match: { field: "message", preview: "hello" } }),
+        )
+
         expect(yield* requestJson<Record<string, unknown>>(SessionPaths.status, { headers })).toEqual({})
 
         expect(

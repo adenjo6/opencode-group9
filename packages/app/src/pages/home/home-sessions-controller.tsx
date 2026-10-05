@@ -1,4 +1,4 @@
-import type { Session } from "@opencode-ai/sdk/v2/client"
+import type { Session, SessionMatch } from "@opencode-ai/sdk/v2/client"
 import { preloadMarkdown } from "@opencode-ai/session-ui/markdown-cache"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useQuery } from "@tanstack/solid-query"
@@ -25,9 +25,10 @@ import type { HomeController } from "./home-controller"
 
 const HOME_SESSION_LIMIT = 64
 export type HomeSessionRecord = {
-  session: Session
+  session: Session & { match?: SessionMatch }
   project: LocalProject
   projectName: string
+  server?: ServerConnection.Any
 }
 
 export type HomeSessionGroup = {
@@ -178,21 +179,24 @@ export function createHomeSessionsController(home: HomeController) {
       server: () => home.selection.value().server,
       canCreate: () => !!home.project.newSession(),
       create: home.project.openNewSession,
-      open: (session: Session, options?: OpenSessionOptions) => {
-        const directoryKey = pathKey(session.directory)
-        const project =
-          home.project
-            .list()
-            .find(
-              (item) =>
-                pathKey(item.worktree) === directoryKey ||
-                item.sandboxes?.some((sandbox) => pathKey(sandbox) === directoryKey),
-            ) ?? projectForSession(session, home.project.list(), projectByID())
-        const conn = home.server.focused()
+      open: (session: Session, options?: OpenSessionOptions, server = home.server.focused()) => {
+        const conn = server
         if (!conn) return
+        const directoryKey = pathKey(session.directory)
+        const projects = home.project.forServer(conn)
+        const project =
+          projects.find(
+            (item) =>
+              pathKey(item.worktree) === directoryKey ||
+              item.sandboxes?.some((sandbox) => pathKey(sandbox) === directoryKey),
+          ) ??
+          projectForSession(
+            session,
+            projects,
+            new Map(projects.flatMap((item) => (item.id ? [[item.id, item] as const] : []))),
+          )
         const directory = project?.worktree ?? session.directory
-        const ctx = home.server.focusedContext()
-        if (!ctx) return
+        const ctx = home.server.context(conn)
         ctx.projects.open(directory)
         if (options?.background) {
           tabs.addSessionTab({ server: ServerConnection.key(conn), sessionId: session.id })
@@ -238,7 +242,11 @@ export function createHomeSessionsController(home: HomeController) {
     },
     tab: {
       isOpen: (record: HomeSessionRecord) =>
-        sessionHasOpenTab(tabs.store, home.selection.value().server, record.session),
+        sessionHasOpenTab(
+          tabs.store,
+          record.server ? ServerConnection.key(record.server) : home.selection.value().server,
+          record.session,
+        ),
     },
   }
 }
@@ -272,7 +280,8 @@ function buildHomeSessionRecords(input: {
 }
 
 export function homeSessionSearchKey(record: HomeSessionRecord) {
-  return `${pathKey(record.session.directory)}:${record.session.id}`
+  const server = record.server ? ServerConnection.key(record.server) : ""
+  return `${server}:${pathKey(record.session.directory)}:${record.session.id}`
 }
 
 function groupSessions(records: HomeSessionRecord[], language: ReturnType<typeof useLanguage>): HomeSessionGroup[] {
